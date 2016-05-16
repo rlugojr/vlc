@@ -34,13 +34,16 @@
 #include <vlc_access.h>
 #include <vlc_variables.h>
 #include <vlc_keystore.h>
+#include <vlc_network.h>
 
 #include <assert.h>
 #include <string.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include <netdb.h>
+#ifdef HAVE_SYS_SOCKET_H
+# include <sys/socket.h>
+# include <netinet/in.h>
+# include <arpa/inet.h>
+# include <netdb.h>
+#endif
 
 #include <bdsm/bdsm.h>
 #include "../smb_common.h"
@@ -225,7 +228,7 @@ static int get_address( access_t *p_access )
 {
     access_sys_t *p_sys = p_access->p_sys;
 
-    if( !inet_aton( p_sys->url.psz_host, &p_sys->addr ) )
+    if( !inet_pton( AF_INET, p_sys->url.psz_host, &p_sys->addr ) )
     {
         /* This is not an ip address, let's try netbios/dns resolve */
         struct addrinfo *p_info = NULL;
