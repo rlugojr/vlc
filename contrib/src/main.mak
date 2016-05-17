@@ -177,6 +177,9 @@ LDFLAGS := $(LDFLAGS) $(EXTRA_LDFLAGS)
 ifndef WITH_OPTIMIZATION
 CFLAGS := $(CFLAGS) -O0
 CXXFLAGS := $(CXXFLAGS) -O0
+else
+CFLAGS := $(CFLAGS) -O2
+CXXFLAGS := $(CXXFLAGS) -O2
 endif
 
 # Do not export those! Use HOSTVARS.
@@ -439,7 +442,10 @@ list:
 	@echo To-be-built packages:
 	@echo '  $(PKGS)' | tr " " "\n" | sort | tr "\n" " " |fmt
 
-.PHONY: all fetch fetch-all install mostlyclean clean distclean package list prebuilt
+help:
+	@cat $(SRC)/help.txt
+
+.PHONY: all fetch fetch-all install mostlyclean clean distclean package list help prebuilt
 
 # CMake toolchain
 toolchain.cmake:
