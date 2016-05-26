@@ -71,11 +71,11 @@ private:
 private:
     static UpnpInstanceWrapper* s_instance;
     static vlc_mutex_t s_lock;
-    UpnpClient_Handle handle_;
-    vlc_mutex_t callback_lock_; // protect opaque_ and callback_
-    SD::MediaServerList* opaque_;
-    Upnp_FunPtr callback_;
-    int refcount_;
+    UpnpClient_Handle m_handle;
+    vlc_mutex_t m_callback_lock; // protect opaque_ and callback_
+    SD::MediaServerList* m_opaque;
+    Upnp_FunPtr m_callback;
+    int m_refcount;
 };
 
 namespace SD
@@ -112,9 +112,9 @@ private:
     std::string getIconURL( IXML_Element* p_device_elem , const char* psz_base_url );
 
 private:
-    services_discovery_t* p_sd_;
-    std::vector<MediaServerDesc*> list_;
-    vlc_mutex_t lock_;
+    services_discovery_t* m_sd;
+    std::vector<MediaServerDesc*> m_list;
+    vlc_mutex_t m_lock;
 };
 
 }
@@ -131,41 +131,36 @@ public:
     static int run( Upnp_EventType, void *, void *);
 
 private:
-    vlc_sem_t       sem_;
-    vlc_mutex_t     lock_;
-    int             refCount_;
-    Upnp_FunPtr     callback_;
-    void*           cookie_;
+    vlc_sem_t       m_sem;
+    vlc_mutex_t     m_lock;
+    int             m_refCount;
+    Upnp_FunPtr     m_callback;
+    void*           m_cookie;
 };
 
 class MediaServer
 {
 public:
-    MediaServer( access_t* p_access );
+    MediaServer( access_t* p_access, input_item_node_t* node );
     ~MediaServer();
-    input_item_t* getNextItem();
+    bool fetchContents();
 
 private:
     MediaServer(const MediaServer&);
     MediaServer& operator=(const MediaServer&);
 
-    void fetchContents();
-    input_item_t* newItem(const char* objectID, const char* title);
-    input_item_t* newItem(const char* title, const char* psz_objectID, mtime_t duration, const char* psz_url );
+    bool addContainer( IXML_Element* containerElement );
+    bool addItem( IXML_Element* itemElement );
 
     IXML_Document* _browseAction(const char*, const char*,
             const char*, const char*, const char* );
     static int sendActionCb( Upnp_EventType, void *, void *);
 
 private:
-    char* psz_root_;
-    char* psz_objectId_;
-    access_t* access_;
-    IXML_Document* xmlDocument_;
-    IXML_NodeList* containerNodeList_;
-    unsigned int   containerNodeIndex_;
-    IXML_NodeList* itemNodeList_;
-    unsigned int   itemNodeIndex_;
+    char* m_psz_root;
+    char* m_psz_objectId;
+    access_t* m_access;
+    input_item_node_t* m_node;
 };
 
 }

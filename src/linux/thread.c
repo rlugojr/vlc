@@ -1,7 +1,7 @@
 /*****************************************************************************
- * fs.h: file system access plug-in common header
+ * linux/thread.c: Linux specifics for threading
  *****************************************************************************
- * Copyright (C) 2009 Rémi Denis-Courmont
+ * Copyright (C) 2016 Rémi Denis-Courmont
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU Lesser General Public License as published by
@@ -18,13 +18,22 @@
  * Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
 
-#include <dirent.h>
+#ifdef HAVE_CONFIG_H
+# include "config.h"
+#endif
 
-int FileOpen (vlc_object_t *);
-void FileClose (vlc_object_t *);
+#include <vlc_common.h>
 
-int DirOpen (vlc_object_t *);
-int DirInit (access_t *p_access, DIR *handle);
-int DirRead (access_t *, input_item_node_t *);
-int DirControl (access_t *, int, va_list);
-void DirClose (vlc_object_t *);
+#include <sys/types.h>
+#include <unistd.h>
+#include <sys/syscall.h>
+
+unsigned long vlc_thread_id(void)
+{
+     static __thread pid_t tid = 0;
+
+     if (unlikely(tid == 0))
+         tid = syscall(__NR_gettid);
+
+     return tid;
+}

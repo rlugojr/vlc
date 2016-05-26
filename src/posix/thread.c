@@ -43,9 +43,6 @@
 #include <pthread.h>
 #include <sched.h>
 
-#ifdef __linux__
-# include <sys/syscall.h> /* SYS_gettid */
-#endif
 #ifdef HAVE_EXECINFO_H
 # include <execinfo.h>
 #endif
@@ -136,20 +133,6 @@ void vlc_trace (const char *fn, const char *file, unsigned line)
      fsync (2);
 }
 
-static inline unsigned long vlc_threadid (void)
-{
-#if defined (__linux__)
-     /* glibc does not provide a call for this */
-     return syscall (__NR_gettid);
-
-#else
-     union { pthread_t th; unsigned long int i; } v = { };
-     v.th = pthread_self ();
-     return v.i;
-
-#endif
-}
-
 #ifndef NDEBUG
 /**
  * Reports a fatal error from the threading layer, for debugging purposes.
@@ -160,7 +143,7 @@ vlc_thread_fatal (const char *action, int error,
 {
     int canc = vlc_savecancel ();
     fprintf (stderr, "LibVLC fatal error %s (%d) in thread %lu ",
-             action, error, vlc_threadid ());
+             action, error, vlc_thread_id ());
     vlc_trace (function, file, line);
     perror ("Thread error");
     fflush (stderr);
@@ -297,6 +280,16 @@ int vlc_cond_timedwait (vlc_cond_t *p_condvar, vlc_mutex_t *p_mutex,
                         mtime_t deadline)
 {
     struct timespec ts = mtime_to_ts (deadline);
+    int val = pthread_cond_timedwait (p_condvar, p_mutex, &ts);
+    if (val != ETIMEDOUT)
+        VLC_THREAD_ASSERT ("timed-waiting on condition");
+    return val;
+}
+
+int vlc_cond_timedwait_daytime (vlc_cond_t *p_condvar, vlc_mutex_t *p_mutex,
+                                time_t deadline)
+{
+    struct timespec ts = { deadline, 0 };
     int val = pthread_cond_timedwait (p_condvar, p_mutex, &ts);
     if (val != ETIMEDOUT)
         VLC_THREAD_ASSERT ("timed-waiting on condition");
@@ -552,6 +545,18 @@ int vlc_clone_detach (vlc_thread_t *th, void *(*entry) (void *), void *data,
     pthread_attr_setdetachstate (&attr, PTHREAD_CREATE_DETACHED);
     return vlc_clone_attr (th, &attr, entry, data, priority);
 }
+
+vlc_thread_t vlc_thread_self (void)
+{
+    return pthread_self ();
+}
+
+#if !defined (__linux__)
+unsigned long vlc_thread_id (void)
+{
+     return -1;
+}
+#endif
 
 int vlc_set_priority (vlc_thread_t th, int priority)
 {

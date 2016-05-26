@@ -1,6 +1,9 @@
 access_vaDirectoryControlHelper
 vlc_access_NewMRL
 vlc_access_Delete
+access_fsdir_init
+access_fsdir_finish
+access_fsdir_additem
 AddMD5
 aout_BitsPerSample
 aout_ChannelExtract
@@ -206,6 +209,9 @@ input_item_SetMeta
 input_item_SetName
 input_item_SetURI
 input_item_WriteMeta
+input_item_slave_GetType
+input_item_slave_New
+input_item_AddSlave
 input_Read
 input_resource_New
 input_resource_Release
@@ -511,7 +517,6 @@ VLC_Compiler
 vlc_cond_broadcast
 vlc_cond_destroy
 vlc_cond_init
-vlc_cond_init_daytime
 vlc_cond_signal
 vlc_cond_timedwait
 vlc_cond_wait
@@ -648,6 +653,8 @@ vlc_sdp_Start
 vlc_sd_Start
 vlc_sd_Stop
 vlc_testcancel
+vlc_thread_self
+vlc_thread_id
 vlc_threadvar_create
 vlc_threadvar_delete
 vlc_threadvar_get

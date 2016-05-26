@@ -114,11 +114,12 @@ struct aout_sys_t
  * synchronization between the set of audio output callbacks, MMThread()
  * and (trivially) the device and session notifications. */
 
+static int DeviceSelect(audio_output_t *, const char *);
 static int vlc_FromHR(audio_output_t *aout, HRESULT hr)
 {
-    /* Restart on unplug */
+    /* Select the default device (and restart) on unplug */
     if (unlikely(hr == AUDCLNT_E_DEVICE_INVALIDATED))
-        aout_RestartRequest(aout, AOUT_RESTART_OUTPUT);
+        DeviceSelect(aout, NULL);
     return SUCCEEDED(hr) ? 0 : -1;
 }
 
@@ -163,10 +164,13 @@ static void Pause(audio_output_t *aout, bool paused, mtime_t date)
 static void Flush(audio_output_t *aout, bool wait)
 {
     aout_sys_t *sys = aout->sys;
+    HRESULT hr;
 
     EnterMTA();
-    aout_stream_Flush(sys->stream, wait);
+    hr = aout_stream_Flush(sys->stream, wait);
     LeaveMTA();
+
+    vlc_FromHR(aout, hr);
 }
 
 static int VolumeSet(audio_output_t *aout, float vol)
@@ -613,8 +617,31 @@ vlc_MMNotificationClient_OnDeviceStateChanged(IMMNotificationClient *this,
     aout_sys_t *sys = vlc_MMNotificationClient_sys(this);
     audio_output_t *aout = sys->aout;
 
-    /* TODO: show device state / ignore missing devices */
-    msg_Dbg(aout, "device %ls state changed %08lx", wid, state);
+    switch (state) {
+        case DEVICE_STATE_UNPLUGGED:
+            msg_Dbg(aout, "device %ls state changed: unplugged", wid);
+            break;
+        case DEVICE_STATE_ACTIVE:
+            msg_Dbg(aout, "device %ls state changed: active", wid);
+            return DeviceUpdated(aout, wid);
+        case DEVICE_STATE_DISABLED:
+            msg_Dbg(aout, "device %ls state changed: disabled", wid);
+            break;
+        case DEVICE_STATE_NOTPRESENT:
+            msg_Dbg(aout, "device %ls state changed: not present", wid);
+            break;
+        default:
+            msg_Dbg(aout, "device %ls state changed: unknown: %08lx", wid, state);
+            return E_FAIL;
+    }
+
+    /* Unplugged, disabled or notpresent */
+    char *id = FromWide(wid);
+    if (unlikely(id == NULL))
+        return E_OUTOFMEMORY;
+    aout_HotplugReport(aout, id, NULL);
+    free(id);
+
     return S_OK;
 }
 

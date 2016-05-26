@@ -45,6 +45,25 @@ static vlc_cond_t  super_variable;
 
 #define IS_INTERRUPTIBLE (!VLC_WINSTORE_APP || _WIN32_WINNT >= 0x0A00)
 
+/*** Threads ***/
+static DWORD thread_key;
+
+struct vlc_thread
+{
+    HANDLE         id;
+
+    bool           killable;
+#if IS_INTERRUPTIBLE
+    bool           killed;
+#else
+    atomic_bool    killed;
+#endif
+    vlc_cleanup_t *cleaners;
+
+    void        *(*entry) (void *);
+    void          *data;
+};
+
 /*** Common helpers ***/
 #if !IS_INTERRUPTIBLE
 static bool isCancelled(void);
@@ -195,29 +214,17 @@ void vlc_mutex_unlock (vlc_mutex_t *p_mutex)
 }
 
 /*** Condition variables ***/
-enum
-{
-    VLC_CLOCK_REALTIME=0, /* must be zero for VLC_STATIC_COND */
-    VLC_CLOCK_MONOTONIC,
-};
-
-static void vlc_cond_init_common(vlc_cond_t *wait, unsigned clock)
+void vlc_cond_init(vlc_cond_t *wait)
 {
     wait->semaphore = CreateSemaphore(NULL, 0, 0x7FFFFFFF, NULL);
     if (unlikely(wait->semaphore == NULL))
         abort();
     wait->waiters = 0;
-    wait->clock = clock;
-}
-
-void vlc_cond_init (vlc_cond_t *p_condvar)
-{
-    vlc_cond_init_common (p_condvar, VLC_CLOCK_MONOTONIC);
 }
 
 void vlc_cond_init_daytime (vlc_cond_t *p_condvar)
 {
-    vlc_cond_init_common (p_condvar, VLC_CLOCK_REALTIME);
+    vlc_cond_init (p_condvar);
 }
 
 void vlc_cond_destroy(vlc_cond_t *wait)
@@ -260,9 +267,15 @@ void vlc_cond_broadcast(vlc_cond_t *wait)
         ReleaseSemaphore(wait->semaphore, waiters, NULL);
 }
 
-static DWORD vlc_cond_wait_delay(vlc_cond_t *wait, vlc_mutex_t *lock,
-                                 DWORD delay)
+static int vlc_cond_wait_delay(vlc_cond_t *wait, vlc_mutex_t *lock,
+                               mtime_t us)
 {
+    if (us < 0)
+        us = 0;
+    if (us > 0x7fffffff)
+        us = 0x7fffffff;
+
+    DWORD delay = us;
     DWORD result;
 
     vlc_testcancel();
@@ -282,7 +295,7 @@ static DWORD vlc_cond_wait_delay(vlc_cond_t *wait, vlc_mutex_t *lock,
 
     if (result == WAIT_IO_COMPLETION)
         vlc_testcancel();
-    return result;
+    return result == WAIT_TIMEOUT ? ETIMEDOUT : 0;
 }
 
 void vlc_cond_wait(vlc_cond_t *wait, vlc_mutex_t *lock)
@@ -292,29 +305,19 @@ void vlc_cond_wait(vlc_cond_t *wait, vlc_mutex_t *lock)
 
 int vlc_cond_timedwait(vlc_cond_t *wait, vlc_mutex_t *lock, mtime_t deadline)
 {
-    mtime_t total;
+    return vlc_cond_wait_delay(wait, lock, deadline - mdate());
+}
 
-    switch (wait->clock)
-    {
-        case VLC_CLOCK_REALTIME: /* FIXME? sub-second precision */
-            total = CLOCK_FREQ * time(NULL);
-            break;
-        case VLC_CLOCK_MONOTONIC:
-            total = mdate();
-            break;
-        default:
-            vlc_assert_unreachable();
-    }
+int vlc_cond_timedwait_daytime(vlc_cond_t *wait, vlc_mutex_t *lock,
+                               time_t deadline)
+{
+    time_t now;
+    mtime_t delay;
 
-    total = (deadline - total) / 1000;
-    if (total < 0)
-        total = 0;
+    time(&now);
+    delay = ((mtime_t)deadline - (mtime_t)now) * CLOCK_FREQ;
 
-    DWORD delay = (total > 0x7fffffff) ? 0x7fffffff : total;
-
-    if (vlc_cond_wait_delay(wait, lock, delay) == WAIT_TIMEOUT)
-        return ETIMEDOUT;
-    return 0;
+    return vlc_cond_wait_delay(wait, lock, delay);
 }
 
 /*** Semaphore ***/
@@ -441,29 +444,10 @@ retry:
     vlc_mutex_unlock(&super_mutex);
 }
 
-/*** Threads ***/
-static DWORD thread_key;
-
-struct vlc_thread
-{
-    HANDLE         id;
-
-    bool           killable;
-#if IS_INTERRUPTIBLE
-    bool           killed;
-#else
-    atomic_bool    killed;
-#endif
-    vlc_cleanup_t *cleaners;
-
-    void        *(*entry) (void *);
-    void          *data;
-};
-
 #if !IS_INTERRUPTIBLE
 static bool isCancelled(void)
 {
-    struct vlc_thread *th = TlsGetValue(thread_key);
+    struct vlc_thread *th = vlc_thread_self();
     if (th == NULL)
         return false; /* Main thread - cannot be cancelled anyway */
 
@@ -558,6 +542,16 @@ int vlc_clone_detach (vlc_thread_t *p_handle, void *(*entry) (void *),
     return vlc_clone_attr (p_handle, true, entry, data, priority);
 }
 
+vlc_thread_t vlc_thread_self (void)
+{
+    return TlsGetValue(thread_key);
+}
+
+unsigned long vlc_thread_id (void)
+{
+    return GetCurrentThreadId ();
+}
+
 int vlc_set_priority (vlc_thread_t th, int priority)
 {
     if (!SetThreadPriority (th->id, priority))
@@ -589,7 +583,7 @@ void vlc_cancel (vlc_thread_t th)
 
 int vlc_savecancel (void)
 {
-    struct vlc_thread *th = TlsGetValue(thread_key);
+    struct vlc_thread *th = vlc_thread_self();
     if (th == NULL)
         return false; /* Main thread - cannot be cancelled anyway */
 
@@ -600,7 +594,7 @@ int vlc_savecancel (void)
 
 void vlc_restorecancel (int state)
 {
-    struct vlc_thread *th = TlsGetValue(thread_key);
+    struct vlc_thread *th = vlc_thread_self();
     assert (state == false || state == true);
 
     if (th == NULL)
@@ -612,7 +606,7 @@ void vlc_restorecancel (int state)
 
 void vlc_testcancel (void)
 {
-    struct vlc_thread *th = TlsGetValue(thread_key);
+    struct vlc_thread *th = vlc_thread_self();
     if (th == NULL)
         return; /* Main thread - cannot be cancelled anyway */
     if (!th->killable)
@@ -641,7 +635,7 @@ void vlc_control_cancel (int cmd, ...)
      * need to lock anything. */
     va_list ap;
 
-    struct vlc_thread *th = TlsGetValue(thread_key);
+    struct vlc_thread *th = vlc_thread_self();
     if (th == NULL)
         return; /* Main thread - cannot be cancelled anyway */
 
