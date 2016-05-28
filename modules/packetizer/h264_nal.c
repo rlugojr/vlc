@@ -159,10 +159,11 @@ void h264_AVC_to_AnnexB( uint8_t *p_buf, uint32_t i_len,
 
 int h264_get_spspps( uint8_t *p_buf, size_t i_buf,
                      uint8_t **pp_sps, size_t *p_sps_size,
-                     uint8_t **pp_pps, size_t *p_pps_size )
+                     uint8_t **pp_pps, size_t *p_pps_size,
+                     uint8_t **pp_ext, size_t *p_ext_size )
 {
-    uint8_t *p_sps = NULL, *p_pps = NULL;
-    size_t i_sps_size = 0, i_pps_size = 0;
+    uint8_t *p_sps = NULL, *p_pps = NULL, *p_ext = NULL;
+    size_t i_sps_size = 0, i_pps_size = 0, i_ext_size = 0;
     int i_nal_type = H264_NAL_UNKNOWN;
     bool b_first_nal = true;
     bool b_has_zero_byte = false;
@@ -181,8 +182,10 @@ int h264_get_spspps( uint8_t *p_buf, size_t i_buf,
                     i_sps_size = p_buf - p_sps - (b_has_zero_byte ? 1 : 0);
                 if( i_nal_type == H264_NAL_PPS )
                     i_pps_size = p_buf - p_pps - (b_has_zero_byte ? 1 : 0);
+                if( i_nal_type == H264_NAL_SPS_EXT )
+                    i_ext_size = p_buf - p_pps - (b_has_zero_byte ? 1 : 0);
 
-                if( i_sps_size && i_pps_size )
+                if( i_sps_size && i_pps_size && i_ext_size ) /* early end */
                     break;
             }
 
@@ -201,6 +204,8 @@ int h264_get_spspps( uint8_t *p_buf, size_t i_buf,
                 p_sps = p_buf - 1;
             if( i_nal_type == H264_NAL_PPS && !p_pps )
                 p_pps = p_buf - 1;
+            if( i_nal_type == H264_NAL_SPS_EXT && !p_ext )
+                p_ext = p_buf - 1;
 
             /* cf. 7.4.1.2.3 */
             if( i_nal_type > 18 || ( i_nal_type >= 10 && i_nal_type <= 12 ) )
@@ -228,6 +233,8 @@ int h264_get_spspps( uint8_t *p_buf, size_t i_buf,
             i_sps_size = p_buf - p_sps;
         if( !i_pps_size && i_nal_type == H264_NAL_PPS )
             i_pps_size = p_buf - p_pps;
+        if( !i_ext_size && i_nal_type == H264_NAL_SPS_EXT )
+            i_ext_size = p_buf - p_ext;
     }
     if( ( !p_sps || !i_sps_size ) && ( !p_pps || !i_pps_size ) )
         return -1;
@@ -235,6 +242,8 @@ int h264_get_spspps( uint8_t *p_buf, size_t i_buf,
     *p_sps_size = i_sps_size;
     *pp_pps = p_pps;
     *p_pps_size = i_pps_size;
+    *pp_ext = p_ext;
+    *p_ext_size = i_ext_size;
 
     return 0;
 }
@@ -273,20 +282,20 @@ static bool h264_parse_sequence_parameter_set_rbsp( bs_t *p_bs,
         i_profile_idc == PROFILE_H264_MFC_HIGH )
     {
         /* chroma_format_idc */
-        const int i_chroma_format_idc = bs_read_ue( p_bs );
-        if( i_chroma_format_idc == 3 )
+        p_sps->i_chroma_idc = bs_read_ue( p_bs );
+        if( p_sps->i_chroma_idc == 3 )
             bs_skip( p_bs, 1 ); /* separate_colour_plane_flag */
         /* bit_depth_luma_minus8 */
-        bs_read_ue( p_bs );
+        p_sps->i_bit_depth_luma = bs_read_ue( p_bs ) + 8;
         /* bit_depth_chroma_minus8 */
-        bs_read_ue( p_bs );
+        p_sps->i_bit_depth_chroma = bs_read_ue( p_bs ) + 8;
         /* qpprime_y_zero_transform_bypass_flag */
         bs_skip( p_bs, 1 );
         /* seq_scaling_matrix_present_flag */
         i_tmp = bs_read( p_bs, 1 );
         if( i_tmp )
         {
-            for( int i = 0; i < ((3 != i_chroma_format_idc) ? 8 : 12); i++ )
+            for( int i = 0; i < ((3 != p_sps->i_chroma_idc) ? 8 : 12); i++ )
             {
                 /* seq_scaling_list_present_flag[i] */
                 i_tmp = bs_read( p_bs, 1 );
@@ -603,6 +612,17 @@ bool h264_get_picture_size( const h264_sequence_parameter_set_t *p_sps, unsigned
     *p_vw = *p_w - p_sps->frame_crop.left_offset - p_sps->frame_crop.right_offset;
     *p_vh = *p_h - p_sps->frame_crop.bottom_offset - p_sps->frame_crop.top_offset;
 
+    return true;
+}
+
+bool h264_get_chroma_luma( const h264_sequence_parameter_set_t *p_sps, uint8_t *pi_chroma_format,
+                           uint8_t *pi_depth_luma, uint8_t *pi_depth_chroma )
+{
+    if( p_sps->i_bit_depth_luma == 0 )
+        return false;
+    *pi_chroma_format = p_sps->i_chroma_idc;
+    *pi_depth_luma = p_sps->i_bit_depth_luma;
+    *pi_depth_chroma = p_sps->i_bit_depth_chroma;
     return true;
 }
 

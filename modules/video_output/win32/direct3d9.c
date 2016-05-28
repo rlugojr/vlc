@@ -648,6 +648,16 @@ static int Direct3D9Create(vout_display_t *vd)
         return VLC_EGENERIC;
     }
 
+    if ( vd->fmt.i_width > sys->d3dcaps.MaxTextureWidth ||
+         vd->fmt.i_height > sys->d3dcaps.MaxTextureHeight )
+    {
+        msg_Err(vd, "Textures too large %ux%u max possible: %ux%u",
+                vd->fmt.i_width, vd->fmt.i_height,
+                (unsigned) sys->d3dcaps.MaxTextureWidth,
+                (unsigned) sys->d3dcaps.MaxTextureHeight);
+        return VLC_EGENERIC;
+    }
+
     return VLC_SUCCESS;
 }
 
@@ -1181,7 +1191,7 @@ static int Direct3D9CreateScene(vout_display_t *vd, const video_format_t *fmt)
 
 #ifndef NDEBUG
     msg_Dbg(vd, "Direct3D created texture: %ix%i",
-                fmt->i_width, fmt->i_height);
+                fmt->i_visible_width, fmt->i_visible_height);
 #endif
 
     /*

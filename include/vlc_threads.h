@@ -3,7 +3,7 @@
  * This header provides portable declarations for mutexes & conditions
  *****************************************************************************
  * Copyright (C) 1999, 2002 VLC authors and VideoLAN
- * Copyright © 2007-2008 Rémi Denis-Courmont
+ * Copyright © 2007-2016 Rémi Denis-Courmont
  *
  * Authors: Jean-Marc Dressler <polux@via.ecp.fr>
  *          Samuel Hocevar <sam@via.ecp.fr>
@@ -68,12 +68,7 @@ typedef struct
     };
 } vlc_mutex_t;
 #define VLC_STATIC_MUTEX { false, { { false, 0 } } }
-typedef struct
-{
-    HANDLE   semaphore;
-    LONG     waiters;
-} vlc_cond_t;
-#define VLC_STATIC_COND { NULL, 0 }
+#define LIBVLC_NEED_CONDVAR
 typedef HANDLE vlc_sem_t;
 #define LIBVLC_NEED_RWLOCK
 typedef struct vlc_threadvar *vlc_threadvar_t;
@@ -326,6 +321,14 @@ typedef struct vlc_timer *vlc_timer_t;
 # define VLC_THREAD_PRIORITY_OUTPUT  15
 # define VLC_THREAD_PRIORITY_HIGHEST 20
 
+#endif
+
+#ifdef LIBVLC_NEED_CONDVAR
+typedef struct
+{
+    int value;
+} vlc_cond_t;
+# define VLC_STATIC_COND { 0 }
 #endif
 
 #ifdef LIBVLC_NEED_SEMAPHORE
@@ -600,6 +603,57 @@ VLC_API int vlc_threadvar_set(vlc_threadvar_t key, void *value);
 VLC_API void *vlc_threadvar_get(vlc_threadvar_t);
 
 /**
+ * Waits on an address.
+ *
+ * Puts the calling thread to sleep if a specific value is stored at a
+ * specified address. If the value does not match, do nothing and return
+ * immediately.
+ *
+ * \param addr address to check for
+ * \param val value to match at the address
+ */
+void vlc_addr_wait(void *addr, int val);
+
+/**
+ * Waits on an address with a time-out.
+ *
+ * This function operates as vlc_addr_wait() but provides an additional
+ * time-out. If the time-out elapses, the thread resumes and the function
+ * returns.
+ *
+ * \param addr address to check for
+ * \param val value to match at the address
+ * \param delay time-out duration
+ *
+ * \return true if the function was woken up before the time-out,
+ * false if the time-out elapsed.
+ */
+bool vlc_addr_timedwait(void *addr, int val, mtime_t delay);
+
+/**
+ * Wakes up one thread on an address.
+ *
+ * Wakes up (at least) one of the thread sleeping on the specified address.
+ * The address must be equal to the first parameter given by at least one
+ * thread sleeping within the vlc_addr_wait() or vlc_addr_timedwait()
+ * functions. If no threads are found, this function does nothing.
+ *
+ * \param addr address identifying which threads may be woken up
+ */
+void vlc_addr_signal(void *addr);
+
+/**
+ * Wakes up all thread on an address.
+ *
+ * Wakes up all threads sleeping on the specified address (if any).
+ * Any thread sleeping within a call to vlc_addr_wait() or vlc_addr_timedwait()
+ * with the specified address as first call parameter will be woken up.
+ *
+ * \param addr address identifying which threads to wake up
+ */
+void vlc_addr_broadcast(void *addr);
+
+/**
  * Creates and starts a new thread.
  *
  * The thread must be <i>joined</i> with vlc_join() to reclaim resources
@@ -867,6 +921,14 @@ VLC_API unsigned vlc_timer_getoverrun(vlc_timer_t) VLC_USED;
  */
 VLC_API unsigned vlc_GetCPUCount(void);
 
+enum
+{
+    VLC_CLEANUP_PUSH,
+    VLC_CLEANUP_POP,
+    VLC_CANCEL_ADDR_SET,
+    VLC_CANCEL_ADDR_CLEAR,
+};
+
 #if defined (LIBVLC_USE_PTHREAD_CLEANUP)
 /**
  * Registers a thread cancellation handler.
@@ -896,11 +958,6 @@ VLC_API unsigned vlc_GetCPUCount(void);
 # define vlc_cleanup_pop( ) pthread_cleanup_pop (0)
 
 #else
-enum
-{
-    VLC_CLEANUP_PUSH,
-    VLC_CLEANUP_POP,
-};
 typedef struct vlc_cleanup_t vlc_cleanup_t;
 
 struct vlc_cleanup_t
@@ -929,6 +986,16 @@ static inline void vlc_cleanup_lock (void *lock)
     vlc_mutex_unlock ((vlc_mutex_t *)lock);
 }
 #define mutex_cleanup_push( lock ) vlc_cleanup_push (vlc_cleanup_lock, lock)
+
+static inline void vlc_cancel_addr_set(void *addr)
+{
+    vlc_control_cancel(VLC_CANCEL_ADDR_SET, addr);
+}
+
+static inline void vlc_cancel_addr_clear(void *addr)
+{
+    vlc_control_cancel(VLC_CANCEL_ADDR_CLEAR, addr);
+}
 
 #ifdef __cplusplus
 /**
