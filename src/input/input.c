@@ -981,6 +981,10 @@ static void SetSubtitlesOptions( input_thread_t *p_input )
 
 static void LoadSlaves( input_thread_t *p_input )
 {
+    input_item_slave_t **pp_slaves;
+    int i_slaves;
+    TAB_INIT( i_slaves, pp_slaves );
+
     /* Look for and add slaves */
 
     char *psz_subtitle = var_GetNonEmptyString( p_input, "sub-file" );
@@ -988,20 +992,25 @@ static void LoadSlaves( input_thread_t *p_input )
     {
         msg_Dbg( p_input, "forced subtitle: %s", psz_subtitle );
         char *psz_uri = input_SubtitleFile2Uri( p_input, psz_subtitle );
+        free( psz_subtitle );
+        psz_subtitle = NULL;
         if( psz_uri != NULL )
         {
-            free( psz_subtitle );
-            psz_subtitle = psz_uri;
-            input_SubtitleAdd( p_input, psz_uri, SUB_FORCED  );
+            input_item_slave_t *p_slave =
+                input_item_slave_New( psz_uri, SLAVE_TYPE_SPU,
+                                      SLAVE_PRIORITY_USER );
+            free( psz_uri );
+            if( p_slave )
+            {
+                INSERT_ELEM( pp_slaves, i_slaves, i_slaves, p_slave );
+                psz_subtitle = p_slave->psz_uri;
+            }
         }
     }
 
     if( var_GetBool( p_input, "sub-autodetect-file" ) )
     {
         /* Add local subtitles */
-        input_item_slave_t **pp_slaves;
-        int i_slaves;
-        TAB_INIT( i_slaves, pp_slaves );
         char *psz_autopath = var_GetNonEmptyString( p_input, "sub-autodetect-path" );
 
         if( subtitles_Detect( p_input, psz_autopath, p_input->p->p_item->psz_uri,
@@ -1021,53 +1030,63 @@ static void LoadSlaves( input_thread_t *p_input )
             }
         }
         free( psz_autopath );
-
-        /* Add slaves found by the directory demuxer */
-        input_item_t *p_item = p_input->p->p_item;
-        vlc_mutex_lock( &p_item->lock );
-        for( int i = 0; i < p_item->i_slaves; i++ )
-        {
-            input_item_slave_t *p_slave = p_item->pp_slaves[i];
-            if( !SlaveExists( pp_slaves, i_slaves, p_slave->psz_uri )
-             && ( !psz_subtitle || strcmp( psz_subtitle, p_slave->psz_uri ) ) )
-            {
-                input_item_slave_t *p_dup_slave =
-                    input_item_slave_New( p_slave->psz_uri, p_slave->i_type,
-                                          p_slave->i_priority );
-                if( p_dup_slave )
-                    INSERT_ELEM( pp_slaves, i_slaves, i_slaves, p_dup_slave );
-            }
-        }
-        vlc_mutex_unlock( &p_item->lock );
-
-        if( i_slaves > 0 )
-            qsort( pp_slaves, i_slaves, sizeof (input_item_slave_t*),
-                   SlaveCompare );
-
-        /* add all detected slaves */
-        for( int i = 0; i < i_slaves && pp_slaves[i] != NULL; i++ )
-        {
-            input_item_slave_t *p_slave = pp_slaves[i];
-            if( p_slave->i_type == SLAVE_TYPE_SPU )
-            {
-                msg_Err( p_input, "Loading spu slave: %s", p_slave->psz_uri );
-                input_SubtitleAdd( p_input, p_slave->psz_uri, SUB_CANFAIL );
-            }
-            else
-            {
-                msg_Err( p_input, "Loading slave: %s", p_slave->psz_uri );
-                input_source_t *p_source = InputSourceNew( p_input,
-                                                           p_slave->psz_uri,
-                                                           NULL, true );
-                if( p_source )
-                    TAB_APPEND( p_input->p->i_slave, p_input->p->slave, p_source );
-            }
-            input_item_slave_Delete( pp_slaves[i] );
-        }
-
-        TAB_CLEAN( i_slaves, pp_slaves );
     }
-    free( psz_subtitle );
+
+    /* Add slaves found by the directory demuxer or via libvlc */
+    input_item_t *p_item = p_input->p->p_item;
+    vlc_mutex_lock( &p_item->lock );
+
+    /* Move item slaves to local pp_slaves */
+    for( int i = 0; i < p_item->i_slaves; i++ )
+    {
+        input_item_slave_t *p_slave = p_item->pp_slaves[i];
+        if( !SlaveExists( pp_slaves, i_slaves, p_slave->psz_uri )
+         && ( !psz_subtitle || strcmp( psz_subtitle, p_slave->psz_uri ) ) )
+            INSERT_ELEM( pp_slaves, i_slaves, i_slaves, p_slave );
+        else
+            input_item_slave_Delete( p_slave );
+    }
+    TAB_CLEAN( p_item->i_slaves, p_item->pp_slaves );
+
+    if( i_slaves > 0 )
+    {
+        qsort( pp_slaves, i_slaves, sizeof (input_item_slave_t*),
+               SlaveCompare );
+        /* Update slave count if there are ignored slaves */
+        for( ; i_slaves > 0 && pp_slaves[i_slaves - 1] == NULL; --i_slaves );
+    }
+
+    /* Update item slaves: add all slaves found with subtitles_Detect(), the
+     * "--sub-file" option and from the item */
+    p_item->pp_slaves = pp_slaves;
+    p_item->i_slaves = i_slaves;
+    vlc_mutex_unlock( &p_item->lock );
+
+    if( i_slaves > 0 )
+        qsort( pp_slaves, i_slaves, sizeof (input_item_slave_t*),
+               SlaveCompare );
+
+    /* add all detected slaves */
+    for( int i = 0; i < i_slaves; i++ )
+    {
+        input_item_slave_t *p_slave = pp_slaves[i];
+        if( p_slave->i_type == SLAVE_TYPE_SPU )
+        {
+            msg_Err( p_input, "Loading spu slave: %s", p_slave->psz_uri );
+            const unsigned i_flags = p_slave->i_priority == SLAVE_PRIORITY_USER
+                                   ? SUB_FORCED : SUB_CANFAIL;
+            input_SubtitleAdd( p_input, p_slave->psz_uri, i_flags );
+        }
+        else
+        {
+            msg_Err( p_input, "Loading slave: %s", p_slave->psz_uri );
+            input_source_t *p_source = InputSourceNew( p_input,
+                                                       p_slave->psz_uri,
+                                                       NULL, true );
+            if( p_source )
+                TAB_APPEND( p_input->p->i_slave, p_input->p->slave, p_source );
+        }
+    }
 
     /* Load subtitles from attachments */
     int i_attachment = 0;
@@ -1465,12 +1484,14 @@ void input_ControlPush( input_thread_t *p_input,
     input_thread_private_t *sys = p_input->p;
 
     vlc_mutex_lock( &sys->lock_control );
-    if( sys->is_stopped )
-        ;
-    else if( sys->i_control >= INPUT_CONTROL_FIFO_SIZE )
+    if( sys->is_stopped || sys->i_control >= INPUT_CONTROL_FIFO_SIZE )
     {
-        msg_Err( p_input, "input control fifo overflow, trashing type=%d",
-                 i_type );
+        if( sys->is_stopped )
+            msg_Dbg( p_input, "input control stopped, trashing type=%d",
+                     i_type );
+        else
+            msg_Err( p_input, "input control fifo overflow, trashing type=%d",
+                     i_type );
         if( p_val )
             ControlRelease( i_type, *p_val );
     }
@@ -1484,8 +1505,9 @@ void input_ControlPush( input_thread_t *p_input,
             memset( &c.val, 0, sizeof(c.val) );
 
         sys->control[sys->i_control++] = c;
+
+        vlc_cond_signal( &sys->wait_control );
     }
-    vlc_cond_signal( &sys->wait_control );
     vlc_mutex_unlock( &sys->lock_control );
 }
 
@@ -1599,8 +1621,11 @@ static void ControlRelease( int i_type, vlc_value_t val )
     switch( i_type )
     {
     case INPUT_CONTROL_ADD_SUBTITLE:
-    case INPUT_CONTROL_ADD_SLAVE:
         free( val.psz_string );
+        break;
+    case INPUT_CONTROL_ADD_SLAVE:
+        if( val.p_address )
+            input_item_slave_Delete( val.p_address );
         break;
 
     default:
@@ -1967,9 +1992,21 @@ static bool Control( input_thread_t *p_input,
             break;
 
         case INPUT_CONTROL_ADD_SLAVE:
-            if( val.psz_string )
+            if( val.p_address )
             {
-                const char *uri = val.psz_string;
+                input_item_slave_t *p_item_slave  = val.p_address;
+                if( p_item_slave->i_type == SLAVE_TYPE_SPU )
+                {
+                    input_SubtitleAdd( p_input, p_item_slave->psz_uri,
+                                       SUB_CANFAIL | SUB_FORCED );
+
+                    /* Update item slaves */
+                    input_item_AddSlave( p_input->p->p_item, p_item_slave );
+                    /* The slave is now owned by the ite */
+                    val.p_address = NULL;
+                    break;
+                }
+                const char *uri = p_item_slave->psz_uri;
                 input_source_t *slave = InputSourceNew( p_input, uri, NULL,
                                                         false );
                 if( slave == NULL )
@@ -2004,6 +2041,11 @@ static bool Control( input_thread_t *p_input,
                 InputUpdateMeta( p_input, slave->p_demux );
 
                 TAB_APPEND( p_input->p->i_slave, p_input->p->slave, slave );
+
+                /* Update item slaves */
+                input_item_AddSlave( p_input->p->p_item, p_item_slave );
+                /* The slave is now owned by the ite */
+                val.p_address = NULL;
             }
             break;
 

@@ -1653,7 +1653,7 @@ float libvlc_media_player_get_fps( libvlc_media_player_t *p_mi )
     if( media == NULL )
         return 0.f;
 
-    input_item_t *item = p_mi->p_md->p_input_item;
+    input_item_t *item = media->p_input_item;
     float fps = 0.f;
 
     vlc_mutex_lock( &item->lock );
@@ -1666,6 +1666,7 @@ float libvlc_media_player_get_fps( libvlc_media_player_t *p_mi )
                   / (float)fmt->video.i_frame_rate_base;
     }
     vlc_mutex_unlock( &item->lock );
+    libvlc_media_release( media );
 
     return fps;
 }
@@ -1888,6 +1889,31 @@ void libvlc_media_player_set_video_title_display( libvlc_media_player_t *p_mi, l
     else
     {
         var_SetBool( p_mi, "video-title-show", false );
+    }
+}
+
+int libvlc_media_player_add_slave( libvlc_media_player_t *p_mi,
+                                   libvlc_media_slave_type_t i_type,
+                                   const char *psz_uri )
+{
+    input_thread_t *p_input_thread = libvlc_get_input_thread ( p_mi );
+
+    if( p_input_thread == NULL )
+    {
+        libvlc_media_t *p_media = libvlc_media_player_get_media( p_mi );
+        if( p_media == NULL )
+            return -1;
+
+        int i_ret = libvlc_media_slaves_add( p_media, i_type, 4, psz_uri );
+        libvlc_media_release( p_media );
+        return i_ret;
+    }
+    else
+    {
+        int i_ret = input_AddSlave( p_input_thread, i_type, psz_uri );
+        vlc_object_release( p_input_thread );
+
+        return i_ret == VLC_SUCCESS ? 0 : -1;
     }
 }
 
