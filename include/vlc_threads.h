@@ -326,7 +326,7 @@ typedef struct vlc_timer *vlc_timer_t;
 #ifdef LIBVLC_NEED_CONDVAR
 typedef struct
 {
-    int value;
+    unsigned value;
 } vlc_cond_t;
 # define VLC_STATIC_COND { 0 }
 #endif
@@ -612,7 +612,7 @@ VLC_API void *vlc_threadvar_get(vlc_threadvar_t);
  * \param addr address to check for
  * \param val value to match at the address
  */
-void vlc_addr_wait(void *addr, int val);
+void vlc_addr_wait(void *addr, unsigned val);
 
 /**
  * Waits on an address with a time-out.
@@ -628,7 +628,7 @@ void vlc_addr_wait(void *addr, int val);
  * \return true if the function was woken up before the time-out,
  * false if the time-out elapsed.
  */
-bool vlc_addr_timedwait(void *addr, int val, mtime_t delay);
+bool vlc_addr_timedwait(void *addr, unsigned val, mtime_t delay);
 
 /**
  * Wakes up one thread on an address.

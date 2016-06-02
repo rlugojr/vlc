@@ -36,6 +36,8 @@
 #include <assert.h>
 #include <limits.h>
 #include <algorithm>
+#include <set>
+#include <string>
 
 /*
  * Constants
@@ -62,7 +64,6 @@ static const char *const ppsz_readible_satip_satellites[] = {
 struct services_discovery_sys_t
 {
     UpnpInstanceWrapper* p_upnp;
-    SD::MediaServerList* p_server_list;
     vlc_thread_t         thread;
 };
 
@@ -232,17 +233,9 @@ static int Open( vlc_object_t *p_this )
     if( !( p_sd->p_sys = p_sys ) )
         return VLC_ENOMEM;
 
-    p_sys->p_server_list = new(std::nothrow) SD::MediaServerList( p_sd );
-    if ( unlikely( p_sys->p_server_list == NULL ) )
-    {
-        free(p_sys);
-        return VLC_ENOMEM;
-    }
-
-    p_sys->p_upnp = UpnpInstanceWrapper::get( p_this, SD::MediaServerList::Callback, p_sys->p_server_list );
+    p_sys->p_upnp = UpnpInstanceWrapper::get( p_this, p_sd );
     if ( !p_sys->p_upnp )
     {
-        delete p_sys->p_server_list;
         free(p_sys);
         return VLC_EGENERIC;
     }
@@ -254,7 +247,6 @@ static int Open( vlc_object_t *p_this )
                     VLC_THREAD_PRIORITY_LOW ) )
     {
         p_sys->p_upnp->release( true );
-        delete p_sys->p_server_list;
         free(p_sys);
         return VLC_EGENERIC;
     }
@@ -272,7 +264,6 @@ static void Close( vlc_object_t *p_this )
 
     vlc_join( p_sys->thread, NULL );
     p_sys->p_upnp->release( true );
-    delete p_sys->p_server_list;
     free( p_sys );
 }
 
@@ -308,11 +299,10 @@ MediaServerList::~MediaServerList()
     vlc_mutex_destroy( &m_lock );
 }
 
-bool MediaServerList::addServer( MediaServerDesc* desc )
+bool MediaServerList::addServerLocked( MediaServerDesc* desc )
 {
-    vlc_mutex_locker lock( &m_lock );
     input_item_t* p_input_item = NULL;
-    if ( getServer( desc->UDN ) )
+    if ( getServerLocked( desc->UDN ) )
         return false;
 
     msg_Dbg( m_sd, "Adding server '%s' with uuid '%s'", desc->friendlyName.c_str(), desc->UDN.c_str() );
@@ -347,7 +337,7 @@ bool MediaServerList::addServer( MediaServerDesc* desc )
     return true;
 }
 
-MediaServerDesc* MediaServerList::getServer( const std::string& udn )
+MediaServerDesc* MediaServerList::getServerLocked( const std::string& udn )
 {
     std::vector<MediaServerDesc*>::const_iterator it = m_list.begin();
     std::vector<MediaServerDesc*>::const_iterator ite = m_list.end();
@@ -396,6 +386,8 @@ void MediaServerList::parseNewServer( IXML_Document *doc, const std::string &loc
 
     if ( !p_device_list )
         return;
+
+    vlc_mutex_locker lock( &m_lock );
     for ( unsigned int i = 0; i < ixmlNodeList_length( p_device_list ); i++ )
     {
         IXML_Element* p_device_element = ( IXML_Element* ) ixmlNodeList_item( p_device_list, i );
@@ -426,7 +418,7 @@ void MediaServerList::parseNewServer( IXML_Document *doc, const std::string &loc
         }
 
         /* Check if server is already added */
-        if ( m_sd->p_sys->p_server_list->getServer( psz_udn ) )
+        if ( getServerLocked( psz_udn ) )
         {
             msg_Warn( m_sd, "Server with uuid '%s' already exists.", psz_udn );
             continue;
@@ -470,7 +462,7 @@ void MediaServerList::parseNewServer( IXML_Document *doc, const std::string &loc
                     break;
 
                 p_server->isSatIp = true;
-                if ( !addServer( p_server ) )
+                if ( !addServerLocked( p_server ) )
                     delete p_server;
             } else {
                 /* if no playlist is found, add a playlist from the web based on the chosen
@@ -497,7 +489,7 @@ void MediaServerList::parseNewServer( IXML_Document *doc, const std::string &loc
                                                                   psz_friendly_name, psz_url, iconUrl );
 
                 p_server->isSatIp = true;
-                if( !addServer( p_server ) ) {
+                if( !addServerLocked( p_server ) ) {
                     delete p_server;
                 }
                 free( psz_url );
@@ -546,7 +538,7 @@ void MediaServerList::parseNewServer( IXML_Document *doc, const std::string &loc
                     if ( unlikely( !p_server ) )
                         break;
 
-                    if ( !addServer( p_server ) )
+                    if ( !addServerLocked( p_server ) )
                     {
                         delete p_server;
                         continue;
@@ -619,7 +611,7 @@ void MediaServerList::removeServer( const std::string& udn )
 {
     vlc_mutex_locker lock( &m_lock );
 
-    MediaServerDesc* p_server = getServer( udn );
+    MediaServerDesc* p_server = getServerLocked( udn );
     if ( !p_server )
         return;
 
@@ -639,9 +631,8 @@ void MediaServerList::removeServer( const std::string& udn )
 /*
  * Handles servers listing UPnP events
  */
-int MediaServerList::Callback( Upnp_EventType event_type, void* p_event, void* p_user_data )
+int MediaServerList::Callback( Upnp_EventType event_type, void* p_event, MediaServerList* self )
 {
-    MediaServerList* self = static_cast<MediaServerList*>( p_user_data );
     services_discovery_t* p_sd = self->m_sd;
 
     switch( event_type )
@@ -803,101 +794,204 @@ bool MediaServer::addContainer( IXML_Element* containerElement )
     return true;
 }
 
+namespace
+{
+    class ItemDescriptionHolder
+    {
+    private:
+        struct Slave : std::string
+        {
+            slave_type type;
+
+            Slave(std::string const &url, slave_type type) :
+                std::string(url), type(type)
+            {
+            }
+        };
+
+        std::set<Slave> slaves;
+
+        const char* objectID,
+            * title,
+            * psz_artist,
+            * psz_genre,
+            * psz_album,
+            * psz_date,
+            * psz_orig_track_nb,
+            * psz_album_artist,
+            * psz_albumArt;
+
+    public:
+        enum MEDIA_TYPE
+            {
+                VIDEO = 0,
+                AUDIO,
+                IMAGE
+            };
+
+        MEDIA_TYPE media_type;
+
+        ItemDescriptionHolder()
+        {
+        }
+
+        bool init(IXML_Element *itemElement)
+        {
+            objectID = ixmlElement_getAttribute( itemElement, "id" );
+            if ( !objectID )
+                return false;
+            title = xml_getChildElementValue( itemElement, "dc:title" );
+            if ( !title )
+                return false;
+            const char *psz_subtitles = xml_getChildElementValue( itemElement, "sec:CaptionInfo" );
+            if ( !psz_subtitles &&
+                 !(psz_subtitles = xml_getChildElementValue( itemElement, "sec:CaptionInfoEx" )) )
+                psz_subtitles = xml_getChildElementValue( itemElement, "pv:subtitlefile" );
+            addSlave(psz_subtitles, SLAVE_TYPE_SPU);
+            psz_artist = xml_getChildElementValue( itemElement, "upnp:artist" );
+            psz_genre = xml_getChildElementValue( itemElement, "upnp:genre" );
+            psz_album = xml_getChildElementValue( itemElement, "upnp:album" );
+            psz_date = xml_getChildElementValue( itemElement, "dc:date" );
+            psz_orig_track_nb = xml_getChildElementValue( itemElement, "upnp:originalTrackNumber" );
+            psz_album_artist = xml_getChildElementValue( itemElement, "upnp:albumArtist" );
+            psz_albumArt = xml_getChildElementValue( itemElement, "upnp:albumArtURI" );
+            const char *psz_media_type = xml_getChildElementValue( itemElement, "upnp:class" );
+            if (strncmp(psz_media_type, "object.item.videoItem", 21) == 0)
+                media_type = VIDEO;
+            else if (strncmp(psz_media_type, "object.item.audioItem", 21) == 0)
+                media_type = AUDIO;
+            else if (strncmp(psz_media_type, "object.item.imageItem", 21) == 0)
+                media_type = IMAGE;
+            else
+                return false;
+            return true;
+        }
+
+        void addSlave(const char *psz_slave, slave_type type)
+        {
+            if (psz_slave)
+                slaves.insert(Slave(psz_slave, type));
+        }
+
+        void addSubtitleSlave(IXML_Element* p_resource)
+        {
+            if (slaves.empty())
+                addSlave(ixmlElement_getAttribute( p_resource, "pv:subtitleFileUri" ),
+                         SLAVE_TYPE_SPU);
+        }
+
+        void setArtworkURL(IXML_Element* p_resource)
+        {
+            psz_albumArt = xml_getChildElementValue( p_resource, "res" );
+        }
+
+        void apply(input_item_t *p_item)
+        {
+            if ( psz_artist != NULL )
+                input_item_SetArtist( p_item, psz_artist );
+            if ( psz_genre != NULL )
+                input_item_SetGenre( p_item, psz_genre );
+            if ( psz_album != NULL )
+                input_item_SetAlbum( p_item, psz_album );
+            if ( psz_date != NULL )
+                input_item_SetDate( p_item, psz_date );
+            if ( psz_orig_track_nb != NULL )
+                input_item_SetTrackNumber( p_item, psz_orig_track_nb );
+            if ( psz_album_artist != NULL )
+                input_item_SetAlbumArtist( p_item, psz_album_artist );
+            if ( psz_albumArt != NULL )
+                input_item_SetArtworkURL( p_item, psz_albumArt );
+            for (std::set<Slave>::iterator it = slaves.begin(); it != slaves.end(); ++it)
+            {
+                input_item_slave *p_slave = input_item_slave_New( it->c_str(), it->type,
+                                                                  SLAVE_PRIORITY_MATCH_ALL );
+                if ( p_slave )
+                    input_item_AddSlave( p_item, p_slave );
+            }
+        }
+
+        input_item_t *createNewItem(IXML_Element *p_resource)
+        {
+            mtime_t i_duration = -1;
+            const char* psz_resource_url = xml_getChildElementValue( p_resource, "res" );
+            if( !psz_resource_url )
+                return NULL;
+            const char* psz_duration = ixmlElement_getAttribute( p_resource, "duration" );
+            if ( psz_duration )
+            {
+                int i_hours, i_minutes, i_seconds;
+                if( sscanf( psz_duration, "%d:%02d:%02d", &i_hours, &i_minutes, &i_seconds ) )
+                    i_duration = INT64_C(1000000) * ( i_hours * 3600 + i_minutes * 60 +
+                                                      i_seconds );
+            }
+            return input_item_NewExt( psz_resource_url, title, i_duration,
+                                      ITEM_TYPE_FILE, ITEM_NET );
+        }
+    };
+}
+
 bool MediaServer::addItem( IXML_Element* itemElement )
 {
-    const char* objectID = ixmlElement_getAttribute( itemElement, "id" );
-    if ( !objectID )
+    ItemDescriptionHolder holder;
+
+    if (!holder.init(itemElement))
         return false;
-
-    const char* title = xml_getChildElementValue( itemElement, "dc:title" );
-    if ( !title )
-        return false;
-
-    const char* psz_subtitles = xml_getChildElementValue( itemElement, "sec:CaptionInfo" );
-    if ( !psz_subtitles )
-    {
-        psz_subtitles = xml_getChildElementValue( itemElement, "sec:CaptionInfoEx" );
-        if ( !psz_subtitles )
-            psz_subtitles = xml_getChildElementValue( itemElement, "pv:subtitlefile" );
-    }
-
     /* Try to extract all resources in DIDL */
     IXML_NodeList* p_resource_list = ixmlDocument_getElementsByTagName( (IXML_Document*) itemElement, "res" );
-    if ( !p_resource_list || ixmlNodeList_length( p_resource_list ) <= 0 )
-    {
-        if ( p_resource_list )
-            ixmlNodeList_free( p_resource_list );
+    if ( !p_resource_list)
         return false;
-    }
-
-    mtime_t i_duration = -1;
-    IXML_Element* p_resource = ( IXML_Element* ) ixmlNodeList_item( p_resource_list, 0 );
-    const char* psz_resource_url = xml_getChildElementValue( p_resource, "res" );
-    if( !psz_resource_url )
-    {
+    int list_lenght = ixmlNodeList_length( p_resource_list );
+    if (list_lenght <= 0 ) {
         ixmlNodeList_free( p_resource_list );
         return false;
     }
-    const char* psz_duration = ixmlElement_getAttribute( p_resource, "duration" );
+    input_item_t *p_item = NULL;
 
-    if ( psz_duration )
+    for (int index = 0; index < list_lenght; index++)
     {
-        int i_hours, i_minutes, i_seconds;
-        if( sscanf( psz_duration, "%d:%02d:%02d", &i_hours, &i_minutes, &i_seconds ) )
-            i_duration = INT64_C(1000000) * ( i_hours * 3600 + i_minutes * 60 +
-                                              i_seconds );
+        IXML_Element* p_resource = ( IXML_Element* ) ixmlNodeList_item( p_resource_list, index );
+        const char* rez_type = ixmlElement_getAttribute( p_resource, "protocolInfo" );
+
+        if (strncmp(rez_type, "http-get:*:video/", 17) == 0 && holder.media_type == ItemDescriptionHolder::VIDEO)
+        {
+            if (!p_item)
+                p_item = holder.createNewItem(p_resource);
+            holder.addSubtitleSlave(p_resource);
+        }
+        else if (strncmp(rez_type, "http-get:*:image/", 17) == 0)
+            switch (holder.media_type)
+            {
+            case ItemDescriptionHolder::IMAGE:
+                if (!p_item) {
+                    p_item = holder.createNewItem(p_resource);
+                    break;
+                }
+            case ItemDescriptionHolder::VIDEO:
+            case ItemDescriptionHolder::AUDIO:
+                holder.setArtworkURL(p_resource);
+                break;
+            }
+        else if (strncmp(rez_type, "http-get:*:text/", 16) == 0)
+            holder.addSlave(xml_getChildElementValue( p_resource, "res" ), SLAVE_TYPE_SPU);
+        else if (strncmp(rez_type, "http-get:*:audio/", 17) == 0)
+        {
+            if (holder.media_type == ItemDescriptionHolder::AUDIO)
+            {
+                if (!p_item)
+                    p_item = holder.createNewItem(p_resource);
+            }
+            else
+                holder.addSlave(xml_getChildElementValue( p_resource, "res" ),
+                                SLAVE_TYPE_AUDIO);
+        }
     }
-
-    if ( psz_subtitles == NULL )
-    {
-        psz_subtitles = ixmlElement_getAttribute( p_resource, "pv:subtitleFileUri" );
-    }
-
-    input_item_t* p_item =
-        input_item_NewExt( psz_resource_url, title, i_duration,
-                           ITEM_TYPE_FILE, ITEM_NET );
-    if ( p_item == NULL )
-    {
-        ixmlNodeList_free( p_resource_list );
+    ixmlNodeList_free( p_resource_list );
+    if (!p_item)
         return false;
-    }
-    const char* psz_artist = xml_getChildElementValue( itemElement, "upnp:artist" );
-
-    if ( psz_artist != NULL )
-        input_item_SetArtist( p_item, psz_artist );
-    const char* psz_genre = xml_getChildElementValue( itemElement, "upnp:genre" );
-    if ( psz_genre != NULL )
-        input_item_SetGenre( p_item, psz_genre );
-    const char* psz_album = xml_getChildElementValue( itemElement, "upnp:album" );
-    if ( psz_album != NULL )
-        input_item_SetAlbum( p_item, psz_album );
-    const char* psz_date = xml_getChildElementValue( itemElement, "dc:date" );
-    if ( psz_date != NULL )
-        input_item_SetDate( p_item, psz_date );
-    const char* psz_orig_track_nb = xml_getChildElementValue( itemElement, "upnp:originalTrackNumber" );
-    if ( psz_orig_track_nb != NULL )
-        input_item_SetTrackNumber( p_item, psz_orig_track_nb );
-    const char* psz_album_artist = xml_getChildElementValue( itemElement, "upnp:albumArtist" );
-    if ( psz_album_artist != NULL )
-        input_item_SetAlbumArtist( p_item, psz_album_artist );
-    const char* psz_albumArt = xml_getChildElementValue( itemElement, "upnp:albumArtURI" );
-    if ( psz_albumArt != NULL )
-        input_item_SetArtworkURL( p_item, psz_albumArt );
-
-    if ( psz_subtitles )
-    {
-        input_item_slave *p_slave =
-            input_item_slave_New( psz_subtitles, SLAVE_TYPE_SPU,
-                                  SLAVE_PRIORITY_MATCH_ALL );
-        if ( p_slave )
-            input_item_AddSlave( p_item, p_slave );
-    }
-
+    holder.apply(p_item);
     input_item_CopyOptions( p_item, m_node->p_item );
     input_item_node_AppendItem( m_node, p_item );
     input_item_Release( p_item );
-
-    ixmlNodeList_free( p_resource_list );
     return true;
 }
 
@@ -936,11 +1030,11 @@ IXML_Document* MediaServer::_browseAction( const char* psz_object_id_,
         return NULL;
 
     i_res = UpnpAddToAction( &p_action, "Browse",
-            CONTENT_DIRECTORY_SERVICE_TYPE, "ContainerID", psz_object_id_ ? psz_object_id_ : "0" );
+            CONTENT_DIRECTORY_SERVICE_TYPE, "ObjectID", psz_object_id_ ? psz_object_id_ : "0" );
 
     if ( i_res != UPNP_E_SUCCESS )
     {
-        msg_Dbg( m_access, "AddToAction 'ContainerID' failed: %s",
+        msg_Dbg( m_access, "AddToAction 'ObjectID' failed: %s",
                 UpnpGetErrorMessage( i_res ) );
         goto browseActionCleanup;
     }
@@ -1103,7 +1197,7 @@ static int Open( vlc_object_t *p_this )
         return VLC_ENOMEM;
 
     p_access->p_sys = p_sys;
-    p_sys->p_upnp = UpnpInstanceWrapper::get( p_this, NULL, NULL );
+    p_sys->p_upnp = UpnpInstanceWrapper::get( p_this, NULL );
     if ( !p_sys->p_upnp )
     {
         delete p_sys;
@@ -1127,22 +1221,32 @@ static void Close( vlc_object_t* p_this )
 
 UpnpInstanceWrapper::UpnpInstanceWrapper()
     : m_handle( -1 )
-    , m_opaque( NULL )
-    , m_callback( NULL )
+    , p_server_list( NULL )
     , m_refcount( 0 )
 {
-    vlc_mutex_init( &m_callback_lock );
+    vlc_mutex_init( &m_server_list_lock );
 }
 
 UpnpInstanceWrapper::~UpnpInstanceWrapper()
 {
     UpnpUnRegisterClient( m_handle );
     UpnpFinish();
-    vlc_mutex_destroy( &m_callback_lock );
+    vlc_mutex_destroy( &m_server_list_lock );
 }
 
-UpnpInstanceWrapper *UpnpInstanceWrapper::get(vlc_object_t *p_obj, Upnp_FunPtr callback, SD::MediaServerList *opaque)
+UpnpInstanceWrapper *UpnpInstanceWrapper::get(vlc_object_t *p_obj, services_discovery_t *p_sd)
 {
+    SD::MediaServerList *p_server_list = NULL;
+    if (p_sd)
+    {
+        p_server_list = new(std::nothrow) SD::MediaServerList( p_sd );
+        if ( unlikely( p_server_list == NULL ) )
+        {
+            msg_Err( p_sd, "Failed to create a MediaServerList");
+            return NULL;
+        }
+    }
+
     vlc_mutex_locker lock( &s_lock );
     if ( s_instance == NULL )
     {
@@ -1191,12 +1295,11 @@ UpnpInstanceWrapper *UpnpInstanceWrapper::get(vlc_object_t *p_obj, Upnp_FunPtr c
     }
     s_instance->m_refcount++;
     // This assumes a single UPNP SD instance
-    if (callback && opaque)
+    if (p_server_list != NULL)
     {
-        vlc_mutex_locker lock( &s_instance->m_callback_lock );
-        assert(!s_instance->m_callback && !s_instance->m_opaque);
-        s_instance->m_opaque = opaque;
-        s_instance->m_callback = callback;
+        vlc_mutex_locker lock( &s_instance->m_server_list_lock );
+        assert(!s_instance->p_server_list);
+        s_instance->p_server_list = p_server_list;
     }
     return s_instance;
 }
@@ -1206,9 +1309,9 @@ void UpnpInstanceWrapper::release(bool isSd)
     vlc_mutex_locker lock( &s_lock );
     if ( isSd )
     {
-        vlc_mutex_locker lock( &m_callback_lock );
-        m_callback = NULL;
-        m_opaque = NULL;
+        vlc_mutex_locker lock( &m_server_list_lock );
+        delete p_server_list;
+        p_server_list = NULL;
     }
     if (--s_instance->m_refcount == 0)
     {
@@ -1225,9 +1328,9 @@ UpnpClient_Handle UpnpInstanceWrapper::handle() const
 int UpnpInstanceWrapper::Callback(Upnp_EventType event_type, void *p_event, void *p_user_data)
 {
     UpnpInstanceWrapper* self = static_cast<UpnpInstanceWrapper*>( p_user_data );
-    vlc_mutex_locker lock( &self->m_callback_lock );
-    if ( !self->m_callback )
+    vlc_mutex_locker lock( &self->m_server_list_lock );
+    if ( !self->p_server_list )
         return 0;
-    self->m_callback( event_type, p_event, self->m_opaque );
+    SD::MediaServerList::Callback( event_type, p_event, self->p_server_list );
     return 0;
 }

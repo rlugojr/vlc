@@ -58,7 +58,7 @@ class UpnpInstanceWrapper
 {
 public:
     // This increases the refcount before returning the instance
-    static UpnpInstanceWrapper* get(vlc_object_t* p_obj, Upnp_FunPtr callback, SD::MediaServerList *opaque);
+    static UpnpInstanceWrapper* get(vlc_object_t* p_obj, services_discovery_t *p_sd);
     void release(bool isSd);
     UpnpClient_Handle handle() const;
 
@@ -72,9 +72,8 @@ private:
     static UpnpInstanceWrapper* s_instance;
     static vlc_mutex_t s_lock;
     UpnpClient_Handle m_handle;
-    vlc_mutex_t m_callback_lock; // protect opaque_ and callback_
-    SD::MediaServerList* m_opaque;
-    Upnp_FunPtr m_callback;
+    vlc_mutex_t m_server_list_lock; // protect p_server_list
+    SD::MediaServerList* p_server_list;
     int m_refcount;
 };
 
@@ -102,17 +101,17 @@ public:
     MediaServerList( services_discovery_t* p_sd );
     ~MediaServerList();
 
-    bool addServer(MediaServerDesc *desc );
+    bool addServerLocked(MediaServerDesc *desc );
     void removeServer(const std::string &udn );
-    MediaServerDesc* getServer( const std::string& udn );
-    static int Callback( Upnp_EventType event_type, void* p_event, void* p_user_data );
+    MediaServerDesc* getServerLocked( const std::string& udn );
+    static int Callback( Upnp_EventType event_type, void* p_event, MediaServerList* self );
 
 private:
     void parseNewServer( IXML_Document* doc, const std::string& location );
     std::string getIconURL( IXML_Element* p_device_elem , const char* psz_base_url );
 
 private:
-    services_discovery_t* m_sd;
+    services_discovery_t* const m_sd;
     std::vector<MediaServerDesc*> m_list;
     vlc_mutex_t m_lock;
 };
