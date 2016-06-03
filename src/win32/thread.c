@@ -66,72 +66,6 @@ struct vlc_thread
     } wait;
 };
 
-/*** Common helpers ***/
-#if !IS_INTERRUPTIBLE
-static bool isCancelled(void);
-#endif
-
-static DWORD vlc_WaitForMultipleObjects (DWORD count, const HANDLE *handles,
-                                         DWORD delay)
-{
-    DWORD ret;
-    if (count == 0)
-    {
-#if !IS_INTERRUPTIBLE
-        do {
-            DWORD new_delay = 50;
-            if (new_delay > delay)
-                new_delay = delay;
-            ret = SleepEx (new_delay, TRUE);
-            if (delay != INFINITE)
-                delay -= new_delay;
-            if (isCancelled())
-                ret = WAIT_IO_COMPLETION;
-        } while (delay && ret == 0);
-#else
-        ret = SleepEx (delay, TRUE);
-#endif
-
-        if (ret == 0)
-            ret = WAIT_TIMEOUT;
-    }
-    else {
-#if !IS_INTERRUPTIBLE
-        do {
-            DWORD new_delay = 50;
-            if (new_delay > delay)
-                new_delay = delay;
-            ret = WaitForMultipleObjectsEx (count, handles, FALSE, new_delay, TRUE);
-            if (delay != INFINITE)
-                delay -= new_delay;
-            if (isCancelled())
-                ret = WAIT_IO_COMPLETION;
-        } while (delay && ret == WAIT_TIMEOUT);
-#else
-        ret = WaitForMultipleObjectsEx (count, handles, FALSE, delay, TRUE);
-#endif
-    }
-
-    /* We do not abandon objects... this would be a bug */
-    assert (ret < WAIT_ABANDONED_0 || WAIT_ABANDONED_0 + count - 1 < ret);
-
-    if (unlikely(ret == WAIT_FAILED))
-        abort (); /* We are screwed! */
-    return ret;
-}
-
-static DWORD vlc_WaitForSingleObject (HANDLE handle, DWORD delay)
-{
-    return vlc_WaitForMultipleObjects (1, &handle, delay);
-}
-
-static DWORD vlc_Sleep (DWORD delay)
-{
-    DWORD ret = vlc_WaitForMultipleObjects (0, NULL, delay);
-    return (ret != WAIT_TIMEOUT) ? ret : 0;
-}
-
-
 /*** Mutexes ***/
 void vlc_mutex_init( vlc_mutex_t *p_mutex )
 {
@@ -216,35 +150,55 @@ void vlc_mutex_unlock (vlc_mutex_t *p_mutex)
 }
 
 /*** Semaphore ***/
+#if (_WIN32_WINNT < _WIN32_WINNT_WIN8)
+# include <stdalign.h>
+
+static inline HANDLE *vlc_sem_handle_p(vlc_sem_t *sem)
+{
+    /* NOTE: vlc_sem_t layout cannot easily depend on Windows version */
+    static_assert (sizeof (HANDLE) <= sizeof (vlc_sem_t), "Size mismatch!");
+    static_assert ((alignof (HANDLE) % alignof (vlc_sem_t)) == 0,
+                   "Alignment mismatch");
+    return (HANDLE *)sem;
+}
+#define vlc_sem_handle(sem) (*vlc_sem_handle_p(sem))
+
 void vlc_sem_init (vlc_sem_t *sem, unsigned value)
 {
-    *sem = CreateSemaphore (NULL, value, 0x7fffffff, NULL);
-    if (*sem == NULL)
+    HANDLE handle = CreateSemaphore(NULL, value, 0x7fffffff, NULL);
+    if (handle == NULL)
         abort ();
+
+    vlc_sem_handle(sem) = handle;
 }
 
 void vlc_sem_destroy (vlc_sem_t *sem)
 {
-    CloseHandle (*sem);
+    CloseHandle(vlc_sem_handle(sem));
 }
 
 int vlc_sem_post (vlc_sem_t *sem)
 {
-    ReleaseSemaphore (*sem, 1, NULL);
+    ReleaseSemaphore(vlc_sem_handle(sem), 1, NULL);
     return 0; /* FIXME */
 }
 
 void vlc_sem_wait (vlc_sem_t *sem)
 {
+    HANDLE handle = vlc_sem_handle(sem);
     DWORD result;
 
     do
     {
         vlc_testcancel ();
-        result = vlc_WaitForSingleObject (*sem, INFINITE);
+        result = WaitForSingleObjectEx(handle, INFINITE, TRUE);
+
+        /* Semaphore abandoned would be a bug. */
+        assert(result != WAIT_ABANDONED_0);
     }
-    while (result == WAIT_IO_COMPLETION);
+    while (result == WAIT_IO_COMPLETION || result == WAIT_FAILED);
 }
+#endif
 
 /*** Thread-specific variables (TLS) ***/
 struct vlc_threadvar
@@ -504,17 +458,6 @@ void vlc_addr_broadcast(void *addr)
 }
 
 /*** Threads ***/
-#if !IS_INTERRUPTIBLE
-static bool isCancelled(void)
-{
-    struct vlc_thread *th = vlc_thread_self();
-    if (th == NULL)
-        return false; /* Main thread - cannot be cancelled anyway */
-
-    return atomic_load(&th->killed);
-}
-#endif
-
 static void vlc_thread_destroy(vlc_thread_t th)
 {
     DeleteCriticalSection(&th->wait.lock);
@@ -586,9 +529,15 @@ int vlc_clone (vlc_thread_t *p_handle, void *(*entry) (void *),
 
 void vlc_join (vlc_thread_t th, void **result)
 {
+    DWORD ret;
+
     do
+    {
         vlc_testcancel ();
-    while (vlc_WaitForSingleObject (th->id, INFINITE) == WAIT_IO_COMPLETION);
+        ret = WaitForSingleObjectEx(th->id, INFINITE, TRUE);
+        assert(ret != WAIT_ABANDONED_0);
+    }
+    while (ret == WAIT_IO_COMPLETION || ret == WAIT_FAILED);
 
     if (result != NULL)
         *result = th->data;
@@ -865,8 +814,8 @@ mtime_t mdate (void)
     return mdate_selected ();
 }
 
-#undef mwait
-void mwait (mtime_t deadline)
+#if (_WIN32_WINNT < _WIN32_WINNT_WIN8)
+void (mwait)(mtime_t deadline)
 {
     mtime_t delay;
 
@@ -876,16 +825,17 @@ void mwait (mtime_t deadline)
         delay = (delay + 999) / 1000;
         if (unlikely(delay > 0x7fffffff))
             delay = 0x7fffffff;
-        vlc_Sleep (delay);
+
+        SleepEx(delay, TRUE);
         vlc_testcancel();
     }
 }
 
-#undef msleep
-void msleep (mtime_t delay)
+void (msleep)(mtime_t delay)
 {
     mwait (mdate () + delay);
 }
+#endif
 
 static void SelectClockSource (vlc_object_t *obj)
 {
