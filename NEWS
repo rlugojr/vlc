@@ -158,6 +158,7 @@ Mac OS X Interface
  * new AppleScript API giving access to audio desynchronization
  * Support for building with disabled sparkle update mechanism
  * New configure flag to disable automatic updates
+ * Expanded AppleScript API for menu detection and navigation
 
 iOS:
  * Dropped support for iOS 6.x
@@ -196,6 +197,9 @@ libVLC:
  * Add libvlc_media_slaves_add, libvlc_media_slaves_clear
    libvlc_media_slaves_get, libvlc_media_slaves_release to add and get slaves
    from a libvlc_media
+ * Add libvlc_media_player_(get|set)_role to set the media role
+ * Add libvlc_media_player_add_slave to replace libvlc_video_set_subtitle_file,
+   working with MRL and supporting also audio slaves
 
 Logging
  * Support for the SystemD Journal

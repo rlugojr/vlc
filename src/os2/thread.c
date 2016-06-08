@@ -77,7 +77,7 @@ static ULONG vlc_DosWaitEventSemEx( HEV hev, ULONG ulTimeout )
     int       n;
     ULONG     rc;
 
-    struct vlc_thread *th = vlc_thread_self( thread_key );
+    struct vlc_thread *th = vlc_thread_self ();
     if( th == NULL || !th->killable )
     {
         /* Main thread - cannot be cancelled anyway
@@ -645,11 +645,7 @@ vlc_thread_t vlc_thread_self (void)
 
 unsigned long vlc_thread_id (void)
 {
-#if 0
-    return vlc_thread_self ()->tid; /* potential NULL deref */
-#else
-    return -1;
-#endif
+    return _gettid();
 }
 
 /*** Thread cancellation ***/

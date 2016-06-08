@@ -96,13 +96,13 @@ static void InputGetExtraFiles( input_thread_t *p_input,
 static void AppendAttachment( int *pi_attachment, input_attachment_t ***ppp_attachment, demux_t ***ppp_attachment_demux,
                               int i_new, input_attachment_t **pp_new, demux_t *p_demux );
 
-enum {
-    SUB_NOFLAG = 0x00,
-    SUB_FORCED = 0x01,
-    SUB_CANFAIL = 0x02,
-};
+#define SLAVE_ADD_NOFLAG    0
+#define SLAVE_ADD_FORCED    (1<<0)
+#define SLAVE_ADD_CANFAIL   (1<<1)
+#define SLAVE_ADD_SET_TIME  (1<<2)
 
-static void input_SubtitleAdd( input_thread_t *, const char *, unsigned );
+static int input_SlaveSourceAdd( input_thread_t *, enum slave_type,
+                                 const char *, unsigned );
 static char *input_SubtitleFile2Uri( input_thread_t *, const char * );
 static void input_ChangeState( input_thread_t *p_input, int i_state ); /* TODO fix name */
 
@@ -273,7 +273,7 @@ input_item_t *input_GetItem( input_thread_t *p_input )
  * XXX Do not forget to update vlc_input.h if you add new variables.
  *****************************************************************************/
 static input_thread_t *Create( vlc_object_t *p_parent, input_item_t *p_item,
-                               const char *psz_header, bool b_quick,
+                               const char *psz_header, bool b_preparsing,
                                input_resource_t *p_resource )
 {
     input_thread_t *p_input = NULL;                 /* thread descriptor */
@@ -289,7 +289,7 @@ static input_thread_t *Create( vlc_object_t *p_parent, input_item_t *p_item,
     snprintf( psz_timer_name, sizeof(psz_timer_name),
               "input launching for '%s'", psz_name );
 
-    msg_Dbg( p_input, "Creating an input for %s'%s'", b_quick ? "preparsing " : "", psz_name);
+    msg_Dbg( p_input, "Creating an input for %s'%s'", b_preparsing ? "preparsing " : "", psz_name);
 
     free( psz_name );
 
@@ -303,7 +303,7 @@ static input_thread_t *Create( vlc_object_t *p_parent, input_item_t *p_item,
     /* Parse input options */
     input_item_ApplyOptions( VLC_OBJECT(p_input), p_item );
 
-    p_input->b_preparsing = b_quick;
+    p_input->b_preparsing = b_preparsing;
     p_input->psz_header = psz_header ? strdup( psz_header ) : NULL;
 
     /* Init Common fields */
@@ -365,7 +365,7 @@ static input_thread_t *Create( vlc_object_t *p_parent, input_item_t *p_item,
     else if( p_item->b_preparse_interact )
     {
         /* If true, this item was asked explicitly to interact with the user
-         * (via libvlc_MetaRequest). Sub items created from this input won't
+         * (via libvlc_MetadataRequest). Sub items created from this input won't
          * have this flag and won't interact with the user */
         p_input->i_flags &= ~OBJECT_FLAGS_NOINTERACT;
     }
@@ -423,11 +423,17 @@ static input_thread_t *Create( vlc_object_t *p_parent, input_item_t *p_item,
                  *psz_end = ',';
 
                  p_seekpoint = vlc_seekpoint_New();
+                 
+                 if( unlikely( p_seekpoint == NULL ) )
+                     break;
+                    
                  while( (psz_end = strchr( psz_start, ',' ) ) )
                  {
                      *psz_end = 0;
                      if( !strncmp( psz_start, "name=", 5 ) )
                      {
+                         free( p_seekpoint->psz_name );
+
                          p_seekpoint->psz_name = strdup(psz_start + 5);
                      }
                      else if( !strncmp( psz_start, "time=", 5 ) )
@@ -543,24 +549,25 @@ bool input_Stopped( input_thread_t *input )
 static void MainLoopDemux( input_thread_t *p_input, bool *pb_changed )
 {
     int i_ret;
+    demux_t *p_demux = p_input->p->master->p_demux;
 
     *pb_changed = false;
 
     if( p_input->p->i_stop > 0 && p_input->p->i_time >= p_input->p->i_stop )
         i_ret = VLC_DEMUXER_EOF;
     else
-        i_ret = demux_Demux( p_input->p->master->p_demux );
+        i_ret = demux_Demux( p_demux );
 
     i_ret = i_ret > 0 ? VLC_DEMUXER_SUCCESS : ( i_ret < 0 ? VLC_DEMUXER_EGENERIC : VLC_DEMUXER_EOF);
 
     if( i_ret == VLC_DEMUXER_SUCCESS )
     {
-        if( p_input->p->master->p_demux->info.i_update )
+        if( p_demux->info.i_update )
         {
-            if( p_input->p->master->p_demux->info.i_update & INPUT_UPDATE_TITLE_LIST )
+            if( p_demux->info.i_update & INPUT_UPDATE_TITLE_LIST )
             {
                 UpdateTitleListfromDemux( p_input );
-                p_input->p->master->p_demux->info.i_update &= ~INPUT_UPDATE_TITLE_LIST;
+                p_demux->info.i_update &= ~INPUT_UPDATE_TITLE_LIST;
             }
             if( p_input->p->master->b_title_demux )
             {
@@ -678,6 +685,9 @@ static void MainLoop( input_thread_t *p_input, bool b_interactive )
     bool b_pause_after_eof = b_interactive &&
                              var_InheritBool( p_input, "play-and-pause" );
 
+    demux_t *p_demux = p_input->p->master->p_demux;
+    const bool b_can_demux = p_demux->pf_demux != NULL;
+
     while( !input_Stopped( p_input ) && p_input->p->i_state != ERROR_S )
     {
         mtime_t i_wakeup = -1;
@@ -697,7 +707,7 @@ static void MainLoop( input_thread_t *p_input, bool b_interactive )
 
                 MainLoopDemux( p_input, &b_force_update );
 
-                if( p_input->p->master->p_demux->pf_demux != NULL )
+                if( b_can_demux )
                     i_wakeup = es_out_GetWakeup( p_input->p->p_es_out );
                 if( b_force_update )
                     i_intf_update = 0;
@@ -979,6 +989,49 @@ static void SetSubtitlesOptions( input_thread_t *p_input )
         var_SetInteger( p_input, "spu-delay", (mtime_t)i_delay * 100000 );
 }
 
+static void GetVarSlaves( input_thread_t *p_input,
+                          input_item_slave_t ***ppp_slaves, int *p_slaves )
+{
+    char *psz = var_GetNonEmptyString( p_input, "input-slave" );
+    if( !psz )
+        return;
+
+    input_item_slave_t **pp_slaves = *ppp_slaves;
+    int i_slaves = *p_slaves;
+
+    char *psz_org = psz;
+    while( psz && *psz )
+    {
+        while( *psz == ' ' || *psz == '#' )
+            psz++;
+
+        char *psz_delim = strchr( psz, '#' );
+        if( psz_delim )
+            *psz_delim++ = '\0';
+
+        if( *psz == 0 )
+            break;
+
+        char *uri = strstr(psz, "://")
+                                   ? strdup( psz ) : vlc_path2uri( psz, NULL );
+        psz = psz_delim;
+        if( uri == NULL )
+            continue;
+
+        input_item_slave_t *p_slave =
+            input_item_slave_New( uri, SLAVE_TYPE_AUDIO, SLAVE_PRIORITY_USER );
+        free( uri );
+
+        if( unlikely( p_slave == NULL ) )
+            break;
+        INSERT_ELEM( pp_slaves, i_slaves, i_slaves, p_slave );
+    }
+    free( psz_org );
+
+    *ppp_slaves = pp_slaves; /* in case of realloc */
+    *p_slaves = i_slaves;
+}
+
 static void LoadSlaves( input_thread_t *p_input )
 {
     input_item_slave_t **pp_slaves;
@@ -1046,47 +1099,42 @@ static void LoadSlaves( input_thread_t *p_input )
         else
             input_item_slave_Delete( p_slave );
     }
+    /* Slaves that are successfully loaded will be added back to the item */
     TAB_CLEAN( p_item->i_slaves, p_item->pp_slaves );
-
-    if( i_slaves > 0 )
-    {
-        qsort( pp_slaves, i_slaves, sizeof (input_item_slave_t*),
-               SlaveCompare );
-        /* Update slave count if there are ignored slaves */
-        for( ; i_slaves > 0 && pp_slaves[i_slaves - 1] == NULL; --i_slaves );
-    }
-
-    /* Update item slaves: add all slaves found with subtitles_Detect(), the
-     * "--sub-file" option and from the item */
-    p_item->pp_slaves = pp_slaves;
-    p_item->i_slaves = i_slaves;
     vlc_mutex_unlock( &p_item->lock );
+
+    /* Add slaves from the "input-slave" option */
+    GetVarSlaves( p_input, &pp_slaves, &i_slaves );
 
     if( i_slaves > 0 )
         qsort( pp_slaves, i_slaves, sizeof (input_item_slave_t*),
                SlaveCompare );
 
     /* add all detected slaves */
-    for( int i = 0; i < i_slaves; i++ )
+    bool p_forced[2] = {};
+    static_assert( SLAVE_TYPE_AUDIO <= 1 && SLAVE_TYPE_SPU <= 1,
+                   "slave type size mismatch");
+    for( int i = 0; i < i_slaves && pp_slaves[i] != NULL; i++ )
     {
         input_item_slave_t *p_slave = pp_slaves[i];
-        if( p_slave->i_type == SLAVE_TYPE_SPU )
+        /* Slaves added via options should not fail */
+        unsigned i_flags = p_slave->i_priority != SLAVE_PRIORITY_USER
+                           ? SLAVE_ADD_CANFAIL : SLAVE_ADD_NOFLAG;
+
+        if( !p_forced[p_slave->i_type]
+         && ( p_slave->b_forced || p_slave->i_priority == SLAVE_PRIORITY_USER ) )
+            i_flags |= SLAVE_ADD_FORCED;
+
+        if( input_SlaveSourceAdd( p_input, p_slave->i_type, p_slave->psz_uri,
+                                  i_flags ) == VLC_SUCCESS )
         {
-            msg_Err( p_input, "Loading spu slave: %s", p_slave->psz_uri );
-            const unsigned i_flags = p_slave->i_priority == SLAVE_PRIORITY_USER
-                                   ? SUB_FORCED : SUB_CANFAIL;
-            input_SubtitleAdd( p_input, p_slave->psz_uri, i_flags );
+            input_item_AddSlave( p_input->p->p_item, p_slave );
+            p_forced[p_slave->i_type] = true;
         }
         else
-        {
-            msg_Err( p_input, "Loading slave: %s", p_slave->psz_uri );
-            input_source_t *p_source = InputSourceNew( p_input,
-                                                       p_slave->psz_uri,
-                                                       NULL, true );
-            if( p_source )
-                TAB_APPEND( p_input->p->i_slave, p_input->p->slave, p_source );
-        }
+            input_item_slave_Delete( p_slave );
     }
+    TAB_CLEAN( i_slaves, pp_slaves );
 
     /* Load subtitles from attachments */
     int i_attachment = 0;
@@ -1116,49 +1164,16 @@ static void LoadSlaves( input_thread_t *p_input )
         {
             var_SetString( p_input, "sub-description", a->psz_description ? a->psz_description : "");
 
-            input_SubtitleAdd( p_input, psz_mrl, SUB_NOFLAG );
-
+            input_SlaveSourceAdd( p_input, SLAVE_TYPE_SPU, psz_mrl,
+                                  SLAVE_ADD_NOFLAG );
             free( psz_mrl );
+            /* Don't update item slaves for attachements */
         }
         vlc_input_attachment_Delete( a );
     }
     free( pp_attachment );
     if( i_attachment > 0 )
         var_Destroy( p_input, "sub-description" );
-}
-
-static void LoadVarSlaves( input_thread_t *p_input )
-{
-    char *psz = var_GetNonEmptyString( p_input, "input-slave" );
-    if( !psz )
-        return;
-
-    char *psz_org = psz;
-    while( psz && *psz )
-    {
-        while( *psz == ' ' || *psz == '#' )
-            psz++;
-
-        char *psz_delim = strchr( psz, '#' );
-        if( psz_delim )
-            *psz_delim++ = '\0';
-
-        if( *psz == 0 )
-            break;
-
-        char *uri = strstr(psz, "://")
-                                   ? strdup( psz ) : vlc_path2uri( psz, NULL );
-        psz = psz_delim;
-        if( uri == NULL )
-            continue;
-        msg_Dbg( p_input, "adding slave input '%s'", uri );
-
-        input_source_t *p_slave = InputSourceNew( p_input, uri, NULL, false );
-        if( p_slave )
-            TAB_APPEND( p_input->p->i_slave, p_input->p->slave, p_slave );
-        free( uri );
-    }
-    free( psz_org );
 }
 
 static void UpdatePtsDelay( input_thread_t *p_input )
@@ -1300,7 +1315,6 @@ static int Init( input_thread_t * p_input )
         StartTitle( p_input );
         SetSubtitlesOptions( p_input );
         LoadSlaves( p_input );
-        LoadVarSlaves( p_input );
         InitPrograms( p_input );
 
         double f_rate = var_InheritFloat( p_input, "rate" );
@@ -1985,7 +1999,8 @@ static bool Control( input_thread_t *p_input,
                 char *psz_uri = input_SubtitleFile2Uri( p_input, val.psz_string );
                 if( psz_uri != NULL )
                 {
-                    input_SubtitleAdd( p_input, psz_uri, SUB_FORCED );
+                    input_SlaveSourceAdd( p_input, SLAVE_TYPE_SPU, psz_uri,
+                                          SLAVE_ADD_FORCED );
                     free( psz_uri );
                 }
             }
@@ -1995,57 +2010,19 @@ static bool Control( input_thread_t *p_input,
             if( val.p_address )
             {
                 input_item_slave_t *p_item_slave  = val.p_address;
-                if( p_item_slave->i_type == SLAVE_TYPE_SPU )
-                {
-                    input_SubtitleAdd( p_input, p_item_slave->psz_uri,
-                                       SUB_CANFAIL | SUB_FORCED );
+                unsigned i_flags = SLAVE_ADD_CANFAIL | SLAVE_ADD_SET_TIME;
+                if( p_item_slave->b_forced )
+                    i_flags |= SLAVE_ADD_FORCED;
 
+                if( input_SlaveSourceAdd( p_input, p_item_slave->i_type,
+                                          p_item_slave->psz_uri, i_flags )
+                                          == VLC_SUCCESS )
+                {
                     /* Update item slaves */
                     input_item_AddSlave( p_input->p->p_item, p_item_slave );
-                    /* The slave is now owned by the ite */
+                    /* The slave is now owned by the item */
                     val.p_address = NULL;
-                    break;
                 }
-                const char *uri = p_item_slave->psz_uri;
-                input_source_t *slave = InputSourceNew( p_input, uri, NULL,
-                                                        false );
-                if( slave == NULL )
-                {
-                    msg_Warn( p_input, "failed to add %s as slave", uri );
-                    break;
-                }
-
-                int64_t i_time;
-
-                /* Add the slave */
-                msg_Dbg( p_input, "adding %s as slave on the fly", uri );
-
-                /* Set position */
-                if( demux_Control( p_input->p->master->p_demux,
-                                   DEMUX_GET_TIME, &i_time ) )
-                {
-                    msg_Err( p_input, "demux doesn't like DEMUX_GET_TIME" );
-                    InputSourceDestroy( slave );
-                    break;
-                }
-
-                if( demux_Control( slave->p_demux,
-                                   DEMUX_SET_TIME, i_time, true ) )
-                {
-                    msg_Err( p_input, "seek failed for new slave" );
-                    InputSourceDestroy( slave );
-                    break;
-                }
-
-                /* Get meta (access and demux) */
-                InputUpdateMeta( p_input, slave->p_demux );
-
-                TAB_APPEND( p_input->p->i_slave, p_input->p->slave, slave );
-
-                /* Update item slaves */
-                input_item_AddSlave( p_input->p->p_item, p_item_slave );
-                /* The slave is now owned by the ite */
-                val.p_address = NULL;
             }
             break;
 
@@ -2344,13 +2321,14 @@ static input_source_t *InputSourceNew( input_thread_t *p_input,
                        &in->b_can_pace_control ) )
         in->b_can_pace_control = false;
 
-    assert( in->p_demux->pf_demux != NULL || !in->b_can_pace_control );
+    demux_t *p_demux = in->p_demux;
+    assert( p_demux->pf_demux != NULL || !in->b_can_pace_control );
 
-    if( in->p_demux->s != NULL )
+    if( p_demux->s != NULL )
     {
         if( !in->b_can_pace_control )
         {
-            if( demux_Control( in->p_demux, DEMUX_CAN_CONTROL_RATE,
+            if( demux_Control( p_demux, DEMUX_CAN_CONTROL_RATE,
                                 &in->b_can_rate_control, &in->b_rescale_ts ) )
             {
                 in->b_can_rate_control = false;
@@ -2910,31 +2888,83 @@ static void MRLSections( const char *p,
     *pi_chapter_end = chapter_end;
 }
 
-/*****************************************************************************
- * input_AddSubtitles: add a subtitle file and enable it
- *****************************************************************************/
-static void input_SubtitleAdd( input_thread_t *p_input,
-                               const char *url, unsigned i_flags )
+static int input_SlaveSourceAdd( input_thread_t *p_input,
+                                 enum slave_type i_type, const char *psz_uri,
+                                 unsigned i_flags )
 {
     vlc_value_t count;
+    const char *psz_es;
+    const char *psz_forced_demux;
+    const bool b_can_fail = i_flags & SLAVE_ADD_CANFAIL;
+    const bool b_forced = i_flags & SLAVE_ADD_FORCED;
+    const bool b_set_time = i_flags & SLAVE_ADD_SET_TIME;
 
-    var_Change( p_input, "spu-es", VLC_VAR_CHOICESCOUNT, &count, NULL );
+    switch( i_type )
+    {
+    case SLAVE_TYPE_SPU:
+        psz_es = "spu-es";
+        psz_forced_demux = "subtitle";
+        break;
+    case SLAVE_TYPE_AUDIO:
+        psz_es = "audio-es";
+        psz_forced_demux = NULL;
+        break;
+    default:
+        vlc_assert_unreachable();
+    }
 
-    input_source_t *sub = InputSourceNew( p_input, url, "subtitle",
-                                          (i_flags & SUB_CANFAIL) );
-    if( sub == NULL )
-        return;
+    if( b_forced )
+        var_Change( p_input, psz_es, VLC_VAR_CHOICESCOUNT, &count, NULL );
 
-    TAB_APPEND( p_input->p->i_slave, p_input->p->slave, sub );
+    msg_Err( p_input, "Loading %s slave: %s (forced: %d)", psz_es, psz_uri, b_forced );
 
-    if( !(i_flags & SUB_FORCED) )
-        return;
+    input_source_t *p_source = InputSourceNew( p_input, psz_uri,
+                                               psz_forced_demux, b_can_fail );
+    if( p_source == NULL )
+    {
+        msg_Warn( p_input, "failed to add %s as slave", psz_uri );
+        return VLC_EGENERIC;
+    }
+
+    if( i_type == SLAVE_TYPE_AUDIO )
+    {
+        if( b_set_time )
+        {
+            int64_t i_time;
+
+            /* Set position */
+            if( demux_Control( p_input->p->master->p_demux,
+                               DEMUX_GET_TIME, &i_time ) )
+            {
+                msg_Err( p_input, "demux doesn't like DEMUX_GET_TIME" );
+                InputSourceDestroy( p_source );
+                return VLC_EGENERIC;
+            }
+
+            if( demux_Control( p_source->p_demux,
+                               DEMUX_SET_TIME, i_time, true ) )
+            {
+                msg_Err( p_input, "seek failed for new slave" );
+                InputSourceDestroy( p_source );
+                return VLC_EGENERIC;
+            }
+        }
+
+        /* Get meta (access and demux) */
+        InputUpdateMeta( p_input, p_source->p_demux );
+    }
+
+    TAB_APPEND( p_input->p->i_slave, p_input->p->slave, p_source );
+
+    if( !b_forced )
+        return VLC_SUCCESS;
 
     /* Select the ES */
     vlc_value_t list;
 
-    if( var_Change( p_input, "spu-es", VLC_VAR_GETCHOICES, &list, NULL ) )
-        return;
+    if( var_Change( p_input, psz_es, VLC_VAR_GETCHOICES, &list, NULL ) )
+        return VLC_SUCCESS;
+
     if( count.i_int == 0 )
         count.i_int++;
     /* if it was first one, there is disable too */
@@ -2947,6 +2977,8 @@ static void input_SubtitleAdd( input_thread_t *p_input,
         es_out_Control( p_input->p->p_es_out_display, ES_OUT_SET_ES_BY_ID, i_id );
     }
     var_FreeList( &list, NULL );
+
+    return VLC_SUCCESS;
 }
 
 static char *input_SubtitleFile2Uri( input_thread_t *p_input,

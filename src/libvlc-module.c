@@ -124,10 +124,23 @@ static const char *const ppsz_snap_formats[] =
     "The default behavior is to automatically select the best method " \
     "available.")
 
+#define ROLE_TEXT N_("Media role")
+#define ROLE_LONGTEXT N_("Media (player) role for operating system policy.")
+
 #define AUDIO_TEXT N_("Enable audio")
 #define AUDIO_LONGTEXT N_( \
     "You can completely disable the audio output. The audio " \
     "decoding stage will not take place, thus saving some processing power.")
+static const char *ppsz_roles[] = {
+     "video", "music", "communication", "game",
+     "notification", "animation", "production",
+     "accessibility", "test",
+};
+static const char *ppsz_roles_text[] = {
+    N_("Video"), N_("Music"), N_("Communication"), N_("Game"),
+    N_("Notification"),  N_("Animation"), N_("Production"),
+    N_("Accessibility"), N_("Test"),
+};
 
 #define GAIN_TEXT N_("Audio gain")
 #define GAIN_LONGTEXT N_( \
@@ -1090,6 +1103,10 @@ static const char *const ppsz_prefres[] = {
     "Automatically preparse files added to the playlist " \
     "(to retrieve some metadata)." )
 
+#define PREPARSE_TIMEOUT_TEXT N_( "Preparsing timeout" )
+#define PREPARSE_TIMEOUT_LONGTEXT N_( \
+    "Maximum time allowed to preparse a file" )
+
 #define METADATA_NETWORK_TEXT N_( "Allow metadata network access" )
 
 #define SD_TEXT N_( "Services discovery modules")
@@ -1466,6 +1483,9 @@ vlc_module_begin ()
     add_module( "aout", "audio output", NULL, AOUT_TEXT, AOUT_LONGTEXT,
                 true )
         change_short('A')
+    add_string( "role", "video", ROLE_TEXT, ROLE_LONGTEXT, true )
+        change_string_list( ppsz_roles, ppsz_roles_text )
+
     set_subcategory( SUBCAT_AUDIO_AFILTER )
     add_module_list( "audio-filter", "audio filter", NULL,
                      AUDIO_FILTER_TEXT, AUDIO_FILTER_LONGTEXT, false )
@@ -2015,6 +2035,9 @@ vlc_module_begin ()
 
     add_bool( "auto-preparse", true, PREPARSE_TEXT,
               PREPARSE_LONGTEXT, false )
+
+    add_integer( "preparse-timeout", 5000, PREPARSE_TIMEOUT_TEXT,
+                 PREPARSE_TIMEOUT_LONGTEXT, false )
 
     add_obsolete_integer( "album-art" )
     add_bool( "metadata-network-access", false, METADATA_NETWORK_TEXT,

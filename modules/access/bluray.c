@@ -29,13 +29,12 @@
 
 #if defined (HAVE_MNTENT_H) && defined(HAVE_SYS_STAT_H)
 # include <mntent.h>
-# include <sys/stat.h>
 #endif
 #include <fcntl.h>      /* O_* */
 #include <unistd.h>     /* close() */
+#include <sys/stat.h>
 
 #ifdef __APPLE__
-# include <sys/stat.h>
 # include <sys/param.h>
 # include <sys/ucred.h>
 # include <sys/mount.h>
@@ -1837,7 +1836,7 @@ static int blurayControl(demux_t *p_demux, int query, va_list args)
     {
         int i_chapter = (int)va_arg(args, int);
         bd_seek_chapter(p_sys->bluray, i_chapter);
-        p_demux->info.i_update = INPUT_UPDATE_SEEKPOINT;
+        p_demux->info.i_update |= INPUT_UPDATE_SEEKPOINT;
         break;
     }
 

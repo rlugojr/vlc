@@ -61,6 +61,8 @@ public:
     static UpnpInstanceWrapper* get(vlc_object_t* p_obj, services_discovery_t *p_sd);
     void release(bool isSd);
     UpnpClient_Handle handle() const;
+    static SD::MediaServerList *lockMediaServerList();
+    static void unlockMediaServerList();
 
 private:
     static int Callback( Upnp_EventType event_type, void* p_event, void* p_user_data );
@@ -72,8 +74,7 @@ private:
     static UpnpInstanceWrapper* s_instance;
     static vlc_mutex_t s_lock;
     UpnpClient_Handle m_handle;
-    vlc_mutex_t m_server_list_lock; // protect p_server_list
-    SD::MediaServerList* p_server_list;
+    static SD::MediaServerList* p_server_list;
     int m_refcount;
 };
 
@@ -101,10 +102,10 @@ public:
     MediaServerList( services_discovery_t* p_sd );
     ~MediaServerList();
 
-    bool addServerLocked(MediaServerDesc *desc );
+    bool addServer(MediaServerDesc *desc );
     void removeServer(const std::string &udn );
-    MediaServerDesc* getServerLocked( const std::string& udn );
-    static int Callback( Upnp_EventType event_type, void* p_event, MediaServerList* self );
+    MediaServerDesc* getServer( const std::string& udn );
+    static int Callback( Upnp_EventType event_type, void* p_event );
 
 private:
     void parseNewServer( IXML_Document* doc, const std::string& location );
@@ -113,7 +114,6 @@ private:
 private:
     services_discovery_t* const m_sd;
     std::vector<MediaServerDesc*> m_list;
-    vlc_mutex_t m_lock;
 };
 
 }
