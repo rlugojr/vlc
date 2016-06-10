@@ -657,3 +657,19 @@ static bool SkipAPETag( demux_t *p_demux )
     return true;
 }
 
+unsigned demux_TestAndClearFlags( demux_t *p_demux, unsigned flags )
+{
+    unsigned ret = p_demux->info.i_update & flags;
+    p_demux->info.i_update &= ~flags;
+    return ret;
+}
+
+int demux_GetTitle( demux_t *p_demux )
+{
+    return p_demux->info.i_title;
+}
+
+int demux_GetSeekpoint( demux_t *p_demux )
+{
+    return p_demux->info.i_seekpoint;
+}

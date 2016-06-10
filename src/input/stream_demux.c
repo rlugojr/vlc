@@ -261,7 +261,8 @@ static void* DStreamThread( void *obj )
     mtime_t next_update = 0;
     while( atomic_load( &p_sys->active ) )
     {
-        if( p_demux->info.i_update || mdate() >= next_update )
+        if( demux_TestAndClearFlags( p_demux, UINT_MAX )
+         || mdate() >= next_update )
         {
             double newpos;
             int64_t newlen, newtime;
@@ -279,7 +280,6 @@ static void* DStreamThread( void *obj )
             p_sys->stats.time = newtime;
             vlc_mutex_unlock( &p_sys->lock );
 
-            p_demux->info.i_update = 0;
             next_update = mdate() + (CLOCK_FREQ / 4);
         }
 
