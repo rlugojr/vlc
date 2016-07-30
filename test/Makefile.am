@@ -18,11 +18,13 @@ check_PROGRAMS = \
 	test_libvlc_media \
 	test_libvlc_media_list \
 	test_libvlc_media_player \
+	test_libvlc_media_discoverer \
 	test_libvlc_slaves \
 	test_src_config_chain \
 	test_src_misc_variables \
 	test_src_crypto_update \
 	test_src_input_stream \
+	test_src_input_stream_fifo \
 	test_src_interface_dialog \
 	test_src_misc_bits \
 	test_src_misc_epg \
@@ -81,6 +83,8 @@ test_libvlc_media_list_SOURCES = libvlc/media_list.c
 test_libvlc_media_list_LDADD = $(LIBVLC)
 test_libvlc_media_player_SOURCES = libvlc/media_player.c
 test_libvlc_media_player_LDADD = $(LIBVLC)
+test_libvlc_media_discoverer_SOURCES = libvlc/media_discoverer.c
+test_libvlc_media_discoverer_LDADD = $(LIBVLC)
 test_libvlc_slaves_SOURCES = libvlc/slaves.c
 test_libvlc_slaves_LDADD = $(LIBVLCCORE) $(LIBVLC)
 test_libvlc_meta_SOURCES = libvlc/meta.c
@@ -96,6 +100,8 @@ test_src_input_stream_LDADD = $(LIBVLCCORE) $(LIBVLC)
 test_src_input_stream_net_SOURCES = src/input/stream.c
 test_src_input_stream_net_CFLAGS = $(AM_CFLAGS) -DTEST_NET
 test_src_input_stream_net_LDADD = $(LIBVLCCORE) $(LIBVLC)
+test_src_input_stream_fifo_SOURCES = src/input/stream_fifo.c
+test_src_input_stream_fifo_LDADD = $(LIBVLCCORE) $(LIBVLC)
 test_src_misc_bits_SOURCES = src/misc/bits.c
 test_src_misc_bits_LDADD = $(LIBVLC)
 test_src_misc_epg_SOURCES = src/misc/epg.c

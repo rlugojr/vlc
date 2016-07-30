@@ -584,7 +584,7 @@ need_libc=false
 dnl Check for usual libc functions
 AC_CHECK_DECLS([nanosleep],,,[#include <time.h>])
 AC_CHECK_FUNCS([daemon fcntl flock fstatvfs fork getenv getpwuid_r isatty lstat memalign mkostemp mmap open_memstream openat pread posix_fadvise posix_madvise setlocale stricmp strnicmp strptime uselocale pthread_cond_timedwait_monotonic_np pthread_condattr_setclock])
-AC_REPLACE_FUNCS([atof atoll dirfd fdopendir ffsll flockfile fsync getdelim getpid lldiv nrand48 poll posix_memalign recvmsg rewind sendmsg setenv strcasecmp strcasestr strdup strlcpy strndup strnlen strnstr strsep strtof strtok_r strtoll swab tdestroy timegm timespec_get strverscmp])
+AC_REPLACE_FUNCS([atof atoll dirfd fdopendir ffsll flockfile fsync getdelim getpid lldiv memrchr nrand48 poll posix_memalign recvmsg rewind sendmsg setenv strcasecmp strcasestr strdup strlcpy strndup strnlen strnstr strsep strtof strtok_r strtoll swab tdestroy timegm timespec_get strverscmp])
 AC_REPLACE_FUNCS([gettimeofday])
 AC_CHECK_FUNCS(fdatasync,,
   [AC_DEFINE(fdatasync, fsync, [Alias fdatasync() to fsync() if missing.])
@@ -613,7 +613,7 @@ AC_FUNC_STRCOLL
 dnl Check for non-standard system calls
 case "$SYS" in
   "linux")
-    AC_CHECK_FUNCS([accept4 pipe2 eventfd vmsplice sched_getaffinity])
+    AC_CHECK_FUNCS([accept4 pipe2 eventfd vmsplice sched_getaffinity recvmmsg])
     ;;
   "mingw32")
     AC_CHECK_FUNCS([_lock_file])
@@ -789,7 +789,7 @@ dnl Check for headers
 dnl
 
 dnl  POSIX
-AC_CHECK_HEADERS([arpa/inet.h pthread.h search.h sys/shm.h sys/socket.h])
+AC_CHECK_HEADERS([arpa/inet.h pthread.h search.h sys/shm.h sys/socket.h sys/uio.h])
 AC_CHECK_HEADERS([net/if.h], [], [],
 [
 #include <sys/types.h>
@@ -1018,7 +1018,7 @@ AS_IF([test "${enable_optimizations}" != "no"], [
   AC_LANG_POP
 
 AH_BOTTOM([
-#if defined(_MSC_VER)
+#if defined(_MSC_VER) && !defined(__clang__)
 # pragma fenv_access(off)
 # pragma fp_contract(on)
 #elif defined(__GNUC__)
@@ -1564,8 +1564,7 @@ then
     AC_MSG_ERROR([Could not find the LUA byte compiler.])
   ])
   AS_IF([test -d "${CONTRIB_DIR}" -a -f "${CONTRIB_DIR}/lib/liblua.a" -a `echo|${LUAC} -o - -|od -j 8 -N 2 -t x2|head -n 1|tr -s ' '|cut -d' ' -f2` != 0404], [
-    AC_MSG_WARN([You need 32-bits luac when using lua from contrib.])
-    have_lua=no
+    AC_MSG_ERROR([You need 32-bits luac when using lua from contrib.])
   ])
 fi
 AM_CONDITIONAL(BUILD_LUA, [test "${have_lua}" = "yes"])
@@ -1781,7 +1780,7 @@ PKG_ENABLE_MODULES_VLC([SFTP], [sftp], [libssh2], (support SFTP file transfer vi
 dnl
 dnl nfs access support
 dnl
-PKG_ENABLE_MODULES_VLC([NFS], [nfs], [libnfs], (support nfs protocol via libnfs), [auto])
+PKG_ENABLE_MODULES_VLC([NFS], [nfs], [libnfs >= 1.10.0], (support nfs protocol via libnfs), [auto])
 
 dnl
 dnl  Video4Linux 2
@@ -1947,13 +1946,14 @@ fi
 dnl
 dnl QTKit
 AC_ARG_ENABLE(macosx-qtkit,
-  [  --enable-macosx-qtkit Mac OS X qtsound (audio) module (default enabled on Mac OS X)])
+  [  --enable-macosx-qtkit Mac OS X qtsound (audio) module (default enabled on Mac OS X <= v10.11)])
 if test "x${enable_macosx_qtkit}" != "xno" &&
   (test "${SYS}" = "darwin" || test "${enable_macosx_qtkit}" = "yes")
 then
-  VLC_ADD_PLUGIN([qtsound])
+  AC_CHECK_HEADERS(QTKit/QTKit.h, [
+      VLC_ADD_PLUGIN([qtsound])
+    ])
 fi
-AM_CONDITIONAL(HAVE_QTKIT, [test "${SYS}" = "darwin" -a "x${enable_macosx_qtkit}" != "xno"])
 
 dnl
 dnl AVFoundation
@@ -2887,6 +2887,8 @@ dnl
 dnl libfluidsynth (MIDI synthetizer) plugin
 dnl
 PKG_ENABLE_MODULES_VLC([FLUIDSYNTH], [], [fluidsynth >= 1.1.2], [MIDI synthetiser with libfluidsynth], [auto])
+PKG_ENABLE_MODULES_VLC([FLUIDLITE], [fluidsynth], [fluidlite], [MIDI synthetiser with libfluidsynth], [auto])
+AC_CHECK_HEADERS(fluidlite.h)
 
 dnl
 dnl Teletext Modules
@@ -4093,42 +4095,7 @@ AS_IF([test "${enable_taglib}" != "no"], [
 dnl
 dnl  libsecret
 dnl
-PKG_ENABLE_MODULES_VLC([SECRET], [], [libsecret-1], [use libsecret for keystore], [auto])
-
-dnl
-dnl  kwallet
-dnl
-AC_ARG_ENABLE(kwallet,
-  [AS_HELP_STRING([--enable-kwallet],
-    [use KWallet for keystore (default auto)])])
-have_kwallet="no"
-KWALLET_CXXFLAGS=""
-KWALLET_LIBS=""
-AS_IF([test "${SYS}" != "mingw32" -a "${SYS}" != "darwin" \
-         -a "${enable_qt}" != "no" -a "${KDE4_CONFIG}" != "no" \
-         -a "${enable_kwallet}" != "no" ], [
-  VLC_SAVE_FLAGS
-  AC_LANG_PUSH([C++])
-  KWALLET_CXXFLAGS="$QT_CFLAGS $CXXFLAGS_qt -I`$KDE4_CONFIG --path include`"
-  CPPFLAGS="$CPPFLAGS $KWALLET_CXXFLAGS"
-  AC_CHECK_HEADER([kwallet.h], [
-    KWALLET_LIBS="$QT_LIBS -L`$KDE4_CONFIG --install lib` -lkdeui"
-    LDFLAGS="$LDFLAGS $KWALLET_LIBS"
-    AC_LINK_IFELSE([AC_LANG_PROGRAM([#include <kwallet.h>], [
-KWallet::Wallet::LocalWallet();
-    ])], [
-      have_kwallet="yes"
-    ])
-  ])
-  AC_LANG_POP([C++])
-  VLC_RESTORE_FLAGS
-])
-AS_IF([test "$enable_kwallet" = "yes" -a "$have_kwallet" = "no" ], [
-  AC_MSG_ERROR([KWallet headers or so not found])
-])
-AC_SUBST(KWALLET_CXXFLAGS)
-AC_SUBST(KWALLET_LIBS)
-AM_CONDITIONAL([HAVE_KWALLET], [test "${have_kwallet}" = "yes"])
+PKG_ENABLE_MODULES_VLC([SECRET], [], [libsecret-1 >= 0.18], [use libsecret for keystore], [auto])
 
 dnl
 dnl  Developers helper modules (should be hidden from configure help)

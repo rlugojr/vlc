@@ -2,7 +2,6 @@ List of vlc plugins (475)
 $Id$
  * a52: A/52 basic parser/packetizer
  * a52tofloat32: A/52 audio converter & decoder plugin, using liba52
- * a52tospdif: Audio converter module to encapsulate A/52 into S/PDIF
  * aa: Ascii art video output
  * access_alsa: Alsa access module
  * access_archive: libarchive based access and stream filter
@@ -20,6 +19,7 @@ $Id$
  * access_output_livehttp: Live HTTP stream output
  * access_output_shout: Shoutcast access output
  * access_output_udp: UDP Network access_output module
+ * access_qtsound: Quicktime Audio Capture
  * access_realrtsp: Real RTSP access
  * access_wasapi: WASAPI audio input
  * accesstweaks: access control tweaking module (dev tool)
@@ -101,6 +101,7 @@ $Id$
  * decomp: Decompression module
  * deinterlace: naive deinterlacing filter
  * demux_cdg: Demuxer for CD-G files (Karaoke)
+ * demux_chromecast: Internal demux filter to report the playback time on the Chromecast
  * demux_stl: EBU STL subtitles demuxer
  * demuxdump: Pseudo-demuxer that dumps the stream
  * diracsys: BBC Dirac demuxer
@@ -117,7 +118,6 @@ $Id$
  * dsm: SMB access module
  * dts: DTS basic parser/packetizer
  * dtstofloat32: DTS Audio converter
- * dtstospdif: Audio converter that encapsulates DTS into S/PDIF
  * dtv: DVB support (superseds bda module for Windows)
  * dummy: dummy interface
  * dv1394: Digital Video (Firewire/IEEE1394/I-Link) access module
@@ -309,7 +309,6 @@ $Id$
  * pva: PVA demuxer
  * qsv: QuickSyncVideo Encoder for Intel hardware
  * qt: interface module using the cross-platform Qt widget library
- * qtsound: Quicktime Audio Capture
  * rar: RAR access and stream filter
  * rawaud: raw audio input module for vlc
  * rawdv: Raw DV demuxer
@@ -329,6 +328,7 @@ $Id$
  * samplerate: Secret Rabbit Code (libsamplerate) audio resampler
  * sap: Interface module to read SAP/SDP announcements
  * sapi: Windows Text to Speech Synthetizer using the SAPI 5.1 API
+ * satip: SES Astra SAT>IP access module
  * scale: Images rescaler
  * scaletempo: Scale audio tempo in sync with playback rate
  * scene: scene video filter
@@ -400,6 +400,7 @@ $Id$
  * theora: a theora video decoder/packetizer/encoder using the libtheora
  * timecode: clock/timecode as a subtitle input
  * tizen_audio: audio output for Tizen
+ * tospdif: Audio converter module to encapsulate A/52 and DTS into S/PDIF
  * transform: filter for horizontal and vertical image flips and 90° rotations
  * tremor: a vorbis audio decoder using the libvorbisidec (aka tremor) library
  * trivial_channel_mixer: Simple channel mixer plugin

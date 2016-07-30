@@ -1,7 +1,7 @@
 /*****************************************************************************
  * upnp.cpp :  UPnP discovery module (libupnp)
  *****************************************************************************
- * Copyright (C) 2004-2011 the VideoLAN team
+ * Copyright (C) 2004-2016 VLC authors and VideoLAN
  * $Id$
  *
  * Authors: Rémi Denis-Courmont <rem # videolan.org> (original plugin)
@@ -9,21 +9,19 @@
  *          Mirsal Ennaime <mirsal dot ennaime at gmail dot com>
  *          Hugo Beauzée-Luyssen <hugo@beauzee.fr>
  *
- * UPnP Plugin using the Intel SDK (libupnp) instead of CyberLink
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU Lesser General Public License as published by
+ * the Free Software Foundation; either version 2.1 of the License, or
  * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU Lesser General Public License for more details.
  *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
+ * You should have received a copy of the GNU Lesser General Public License
+ * along with this program; if not, write to the Free Software Foundation,
+ * Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
 
 #include "upnp.hpp"
@@ -1045,6 +1043,7 @@ IXML_Document* MediaServer::_browseAction( const char* psz_object_id_,
     IXML_Document* p_action = NULL;
     IXML_Document* p_response = NULL;
     Upnp_i11e_cb *i11eCb = NULL;
+    access_sys_t *sys = (access_sys_t *)m_access->p_sys;
 
     int i_res;
 
@@ -1113,7 +1112,7 @@ IXML_Document* MediaServer::_browseAction( const char* psz_object_id_,
     /* Setup an interruptible callback that will call sendActionCb if not
      * interrupted by vlc_interrupt_kill */
     i11eCb = new Upnp_i11e_cb( sendActionCb, &p_response );
-    i_res = UpnpSendActionAsync( m_access->p_sys->p_upnp->handle(),
+    i_res = UpnpSendActionAsync( sys->p_upnp->handle(),
               m_psz_root,
               CONTENT_DIRECTORY_SERVICE_TYPE,
               NULL, /* ignored in SDK, must be NULL */
@@ -1201,7 +1200,7 @@ static int ControlDirectory( access_t *p_access, int i_query, va_list args )
 {
     switch( i_query )
     {
-    case ACCESS_IS_DIRECTORY:
+    case STREAM_IS_DIRECTORY:
         *va_arg( args, bool * ) = true; /* might loop */
         break;
     default:
@@ -1235,8 +1234,10 @@ static int Open( vlc_object_t *p_this )
 static void Close( vlc_object_t* p_this )
 {
     access_t* p_access = (access_t*)p_this;
-    p_access->p_sys->p_upnp->release( false );
-    delete p_access->p_sys;
+    access_sys_t *sys = (access_sys_t *)p_access->p_sys;
+
+    sys->p_upnp->release( false );
+    delete sys;
 }
 
 }
@@ -1275,7 +1276,7 @@ UpnpInstanceWrapper *UpnpInstanceWrapper::get(vlc_object_t *p_obj, services_disc
 
     #ifdef UPNP_ENABLE_IPV6
         char* psz_miface = var_InheritString( p_obj, "miface" );
-        msg_Info( p_obj, "Initializing libupnp on '%s' interface", psz_miface );
+        msg_Info( p_obj, "Initializing libupnp on '%s' interface", psz_miface ? psz_miface : "default" );
         int i_res = UpnpInit2( psz_miface, 0 );
         free( psz_miface );
     #else

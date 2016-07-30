@@ -253,6 +253,8 @@ void h264_release_sps( h264_sequence_parameter_set_t *p_sps )
     free( p_sps );
 }
 
+#define H264_CONSTRAINT_SET_FLAG(N) (0x80 >> N)
+
 static bool h264_parse_sequence_parameter_set_rbsp( bs_t *p_bs,
                                                     h264_sequence_parameter_set_t *p_sps )
 {
@@ -260,7 +262,7 @@ static bool h264_parse_sequence_parameter_set_rbsp( bs_t *p_bs,
 
     int i_profile_idc = bs_read( p_bs, 8 );
     p_sps->i_profile = i_profile_idc;
-    p_sps->i_profile_compatibility = bs_read( p_bs, 8 );
+    p_sps->i_constraint_set_flags = bs_read( p_bs, 8 );
     p_sps->i_level = bs_read( p_bs, 8 );
     /* sps id */
     p_sps->i_id = bs_read_ue( p_bs );
@@ -472,13 +474,13 @@ static bool h264_parse_sequence_parameter_set_rbsp( bs_t *p_bs,
         }
 
         /* Nal hrd & VC1 hrd parameters */
-        p_sps->vui.b_cpb_dpb_delays_present_flag = false;
+        p_sps->vui.b_hrd_parameters_present_flag = false;
         for ( int i=0; i<2; i++ )
         {
             i_tmp = bs_read( p_bs, 1 );
             if( i_tmp )
             {
-                p_sps->vui.b_cpb_dpb_delays_present_flag = true;
+                p_sps->vui.b_hrd_parameters_present_flag = true;
                 uint32_t count = bs_read_ue( p_bs ) + 1;
                 bs_read( p_bs, 4 );
                 bs_read( p_bs, 4 );
@@ -495,7 +497,7 @@ static bool h264_parse_sequence_parameter_set_rbsp( bs_t *p_bs,
             }
         }
 
-        if( p_sps->vui.b_cpb_dpb_delays_present_flag )
+        if( p_sps->vui.b_hrd_parameters_present_flag )
             bs_read( p_bs, 1 );
 
         /* pic struct info */
@@ -626,32 +628,38 @@ bool h264_get_chroma_luma( const h264_sequence_parameter_set_t *p_sps, uint8_t *
     return true;
 }
 
-bool h264_get_profile_level(const es_format_t *p_fmt, size_t *p_profile,
-                            size_t *p_level, uint8_t *pi_nal_length_size)
+bool h264_get_profile_level(const es_format_t *p_fmt, uint8_t *pi_profile,
+                            uint8_t *pi_level, uint8_t *pi_nal_length_size)
 {
     uint8_t *p = (uint8_t*)p_fmt->p_extra;
-    if(!p || !p_fmt->p_extra) return false;
+    if(p_fmt->i_extra < 8)
+        return false;
 
     /* Check the profile / level */
-    if (p_fmt->i_original_fourcc == VLC_FOURCC('a','v','c','1') && p[0] == 1)
+    if (p[0] == 1 && p_fmt->i_extra >= 12)
     {
-        if (p_fmt->i_extra < 12) return false;
-        if (pi_nal_length_size) *pi_nal_length_size = 1 + (p[4]&0x03);
-        if (!(p[5]&0x1f)) return false;
+        if (pi_nal_length_size)
+            *pi_nal_length_size = 1 + (p[4]&0x03);
         p += 8;
     }
-    else
+    else if(!p[0] && !p[1]) /* FIXME: WTH is setting AnnexB data here ? */
     {
-        if (p_fmt->i_extra < 8) return false;
-        if (!p[0] && !p[1] && !p[2] && p[3] == 1) p += 4;
-        else if (!p[0] && !p[1] && p[2] == 1) p += 3;
-        else return false;
+        if (!p[2] && p[3] == 1)
+            p += 4;
+        else if (p[2] == 1)
+            p += 3;
+        else
+            return false;
     }
+    else return false;
 
     if ( ((*p++)&0x1f) != 7) return false;
 
-    /* Get profile/level out of first SPS */
-    if (p_profile) *p_profile = p[0];
-    if (p_level) *p_level = p[2];
+    if (pi_profile)
+        *pi_profile = p[0];
+
+    if (pi_level)
+        *pi_level = p[2];
+
     return true;
 }

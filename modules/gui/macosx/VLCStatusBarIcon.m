@@ -193,6 +193,8 @@
         vlc_object_release(input);
     } else {
         /* Nothing playing */
+        [progressField setStringValue:@"--:--"];
+        [totalField setStringValue:@"--:--"];
         [self setStoppedStatus:YES];
     }
 }
@@ -373,12 +375,9 @@
 
 - (void)setProgressTimeEnabled:(BOOL)enabled
 {
-    NSColor *color;
-    color = (!enabled) ? [NSColor secondaryLabelColor] : [NSColor blackColor];
-    // Set color to the labels
-    [progressField setTextColor:color];
-    [separatorField setTextColor:color];
-    [totalField setTextColor:color];
+    [progressField setEnabled:enabled];
+    [separatorField setEnabled:enabled];
+    [totalField setEnabled:enabled];
 }
 
 

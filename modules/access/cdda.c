@@ -132,7 +132,7 @@ struct access_sys_t
     int         i_last_sector;
 };
 
-static block_t *Block( access_t * );
+static block_t *Block( access_t *, bool * );
 static int      Seek( access_t *, uint64_t );
 static int      Control( access_t *, int, va_list );
 
@@ -247,7 +247,6 @@ static int Open( vlc_object_t *p_this )
     }
 
     /* Set up p_access */
-    access_InitFields( p_access );
     ACCESS_SET_CALLBACKS( NULL, Block, Control, Seek );
     return VLC_SUCCESS;
 
@@ -274,16 +273,18 @@ static void Close( vlc_object_t *p_this )
 /*****************************************************************************
  * Block: read data (CDDA_DATA_ONCE)
  *****************************************************************************/
-static block_t *Block( access_t *p_access )
+static block_t *Block( access_t *p_access, bool *restrict eof )
 {
     access_sys_t *p_sys = p_access->p_sys;
     int i_blocks = CDDA_BLOCKS_ONCE;
     block_t *p_block;
 
-    if( p_sys->i_track < 0 ) p_access->info.b_eof = true;
-
     /* Check end of file */
-    if( p_access->info.b_eof ) return NULL;
+    if( p_sys->i_track < 0 )
+    {
+        *eof = true;
+        return NULL;
+    }
 
     if( !p_sys->b_header )
     {
@@ -296,7 +297,7 @@ static block_t *Block( access_t *p_access )
 
     if( p_sys->i_sector >= p_sys->i_last_sector )
     {
-        p_access->info.b_eof = true;
+        *eof = true;
         return NULL;
     }
 
@@ -348,23 +349,25 @@ static int Seek( access_t *p_access, uint64_t i_pos )
  *****************************************************************************/
 static int Control( access_t *p_access, int i_query, va_list args )
 {
+    access_sys_t *sys = p_access->p_sys;
+
     switch( i_query )
     {
-        case ACCESS_CAN_SEEK:
-        case ACCESS_CAN_FASTSEEK:
-        case ACCESS_CAN_PAUSE:
-        case ACCESS_CAN_CONTROL_PACE:
+        case STREAM_CAN_SEEK:
+        case STREAM_CAN_FASTSEEK:
+        case STREAM_CAN_PAUSE:
+        case STREAM_CAN_CONTROL_PACE:
             *va_arg( args, bool* ) = true;
             break;
-        case ACCESS_GET_SIZE:
-            *va_arg( args, uint64_t * ) = p_access->p_sys->size;
+        case STREAM_GET_SIZE:
+            *va_arg( args, uint64_t * ) = sys->size;
             break;
-        case ACCESS_GET_PTS_DELAY:
+        case STREAM_GET_PTS_DELAY:
             *va_arg( args, int64_t * ) =
                 INT64_C(1000) * var_InheritInteger( p_access, "disc-caching" );
             break;
 
-        case ACCESS_SET_PAUSE_STATE:
+        case STREAM_SET_PAUSE_STATE:
             break;
 
         default:

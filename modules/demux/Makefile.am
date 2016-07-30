@@ -235,7 +235,7 @@ demux_LTLIBRARIES += libplaylist_plugin.la
 libts_plugin_la_SOURCES = demux/mpeg/ts.c demux/mpeg/ts.h \
         demux/mpeg/ts_pid.h demux/mpeg/ts_pid_fwd.h demux/mpeg/ts_pid.c \
         demux/mpeg/ts_psi.h demux/mpeg/ts_psi.c \
-        demux/mpeg/ts_psi_eit.h demux/mpeg/ts_psi_eit.c \
+        demux/mpeg/ts_si.h demux/mpeg/ts_si.c \
         demux/mpeg/ts_psip.h demux/mpeg/ts_psip.c \
         demux/mpeg/ts_psip_dvbpsi_fixes.h demux/mpeg/ts_psip_dvbpsi_fixes.c \
         demux/mpeg/ts_decoders.h demux/mpeg/ts_decoders.c \
@@ -448,7 +448,7 @@ if HAVE_GCRYPT
 libadaptive_plugin_la_CXXFLAGS += $(GCRYPT_CFLAGS)
 libadaptive_plugin_la_LIBADD += $(GCRYPT_LIBS)
 endif
-demux_LTLIBRARIES += libadaptive_plugin.la
+EXTRA_LTLIBRARIES += libadaptive_plugin.la
 
 libttml_plugin_la_SOURCES = demux/ttml.c
 demux_LTLIBRARIES += libttml_plugin.la

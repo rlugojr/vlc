@@ -95,7 +95,7 @@ static void aout_MuteNotify (audio_output_t *aout, bool mute)
 
 static void aout_PolicyNotify (audio_output_t *aout, bool cork)
 {
-    (cork ? var_IncInteger : var_DecInteger) (aout->p_parent, "corks");
+    (cork ? var_IncInteger : var_DecInteger) (aout->obj.parent, "corks");
 }
 
 static void aout_DeviceNotify (audio_output_t *aout, const char *id)
@@ -334,10 +334,10 @@ void aout_Destroy (audio_output_t *aout)
     aout_OutputUnlock (aout);
 
     var_DelCallback (aout, "audio-filter", FilterCallback, NULL);
-    var_DelCallback (aout, "device", var_CopyDevice, aout->p_parent);
-    var_DelCallback (aout, "mute", var_Copy, aout->p_parent);
+    var_DelCallback (aout, "device", var_CopyDevice, aout->obj.parent);
+    var_DelCallback (aout, "mute", var_Copy, aout->obj.parent);
     var_SetFloat (aout, "volume", -1.f);
-    var_DelCallback (aout, "volume", var_Copy, aout->p_parent);
+    var_DelCallback (aout, "volume", var_Copy, aout->obj.parent);
     vlc_object_release (aout);
 }
 
@@ -692,20 +692,41 @@ int aout_DevicesList (audio_output_t *aout, char ***ids, char ***names)
 {
     aout_owner_t *owner = aout_owner (aout);
     char **tabid, **tabname;
-    unsigned count;
+    unsigned count = 0;
 
     vlc_mutex_lock (&owner->dev.lock);
-    count = owner->dev.count;
-    tabid = xmalloc (sizeof (*tabid) * count);
-    tabname = xmalloc (sizeof (*tabname) * count);
-    *ids = tabid;
-    *names = tabname;
-    for (aout_dev_t *dev = owner->dev.list; dev != NULL; dev = dev->next)
+    tabid = malloc (sizeof (*tabid) * owner->dev.count);
+    tabname = malloc (sizeof (*tabname) * owner->dev.count);
+    if(likely(tabid && tabname))
     {
-        *(tabid++) = xstrdup (dev->id);
-        *(tabname++) = xstrdup (dev->name);
+        for (aout_dev_t *dev = owner->dev.list; dev != NULL; dev = dev->next)
+        {
+            char *psz_id = strdup (dev->id);
+            if(unlikely(psz_id == NULL))
+                break;
+
+            char *psz_name = strdup (dev->name);
+            if(unlikely(psz_name == NULL))
+            {
+                free(psz_id);
+                break;
+            }
+
+            tabid[count] = psz_id;
+            tabname[count++] = psz_name;
+        }
     }
     vlc_mutex_unlock (&owner->dev.lock);
+
+    if(unlikely(count == 0))
+    {
+        free(tabid);
+        free(tabname);
+        return -1;
+    }
+
+    *ids = tabid;
+    *names = tabname;
 
     return count;
 }

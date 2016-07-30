@@ -87,7 +87,6 @@ struct decoder_sys_t
     size_t i_csd_count;
     size_t i_csd_send;
 
-    bool b_update_format;
     bool b_has_format;
 
     int64_t i_preroll_end;
@@ -123,7 +122,6 @@ struct decoder_sys_t
             int i_pixel_format;
             uint8_t i_nal_length_size;
             size_t i_h264_profile;
-            bool b_first_mp4v_iframe;
             /* stores the inflight picture for each output buffer or NULL */
             picture_sys_t** pp_inflight_pictures;
             unsigned int i_inflight_pictures;
@@ -151,7 +149,6 @@ static void CloseDecoder(vlc_object_t *);
 static int Video_OnNewBlock(decoder_t *, block_t **, int *);
 static int VideoH264_OnNewBlock(decoder_t *, block_t **, int *);
 static int VideoHEVC_OnNewBlock(decoder_t *, block_t **, int *);
-static int VideoMP4V_OnNewBlock(decoder_t *, block_t **, int *);
 static int VideoVC1_OnNewBlock(decoder_t *, block_t **, int *);
 static void Video_OnFlush(decoder_t *);
 static int Video_ProcessOutput(decoder_t *, mc_api_out *, picture_t **, block_t **);
@@ -348,8 +345,20 @@ static int ParseVideoExtraH264(decoder_t *p_dec, uint8_t *p_extra, int i_extra)
         size_t i_size = 0;
         uint8_t *p_buf = h264_avcC_to_AnnexB_NAL(p_extra, i_extra, &i_size,
                                                  &p_sys->u.video.i_nal_length_size);
-        if (!p_buf)
+
+        /* XXX h264_AVC_to_AnnexB() works only with a i_nal_length_size of 4.
+         * If nal_length_size is smaller than 4, fallback to SW decoding. I
+         * don't know if it's worth the effort to fix h264_AVC_to_AnnexB() for
+         * a smaller nal_length_size. Indeed, this case will happen only with
+         * very small resolutions, where MediaCodec is not that useful.
+         * -Thomas */
+        if (!p_buf || p_sys->u.video.i_nal_length_size != 4)
+        {
+            msg_Dbg(p_dec, "h264_avcC_to_AnnexB_NAL failed%s",
+                    p_buf ? ": nal_length_size too small" : "");
+            free(p_buf);
             return VLC_EGENERIC;
+        }
 
         int i_ret = H264SetCSD(p_dec, p_buf, i_size, NULL);
         free(p_buf);
@@ -508,10 +517,10 @@ static int StartMediaCodec(decoder_t *p_dec)
         if (p_dec->fmt_in.i_codec == VLC_CODEC_H264
          && !p_sys->u.video.i_h264_profile)
         {
-            h264_get_profile_level(&p_dec->fmt_in,
-                                   &p_sys->u.video.i_h264_profile, NULL, NULL);
-            if (p_sys->u.video.i_h264_profile)
+            uint8_t i_profile;
+            if(h264_get_profile_level(&p_dec->fmt_in, &i_profile, NULL, NULL))
             {
+                p_sys->u.video.i_h264_profile = i_profile;
                 if (p_sys->api->configure(p_sys->api,
                                           p_sys->u.video.i_h264_profile) != 0 )
                     return VLC_EGENERIC;
@@ -612,7 +621,12 @@ static int OpenDecoder(vlc_object_t *p_this, pf_MediaCodecApi_init pf_init)
         case VLC_CODEC_VC1:  mime = "video/wvc1"; break;
         case VLC_CODEC_VP8:  mime = "video/x-vnd.on2.vp8"; break;
         case VLC_CODEC_VP9:  mime = "video/x-vnd.on2.vp9"; break;
-        case VLC_CODEC_MPGV: mime = "video/mpeg2"; break;
+        /* FIXME: mpeg2 is disabled: sar num/den can't be updated from
+         * MediaCodec. Use avcodec instead that will update it. The proper
+         * solution is to update sar from a mpeg2 packetizer.
+         *
+         * case VLC_CODEC_MPGV: mime = "video/mpeg2"; break;
+         */
         }
     }
     else
@@ -654,7 +668,12 @@ static int OpenDecoder(vlc_object_t *p_this, pf_MediaCodecApi_init pf_init)
     api->psz_mime = mime;
 
     if (p_dec->fmt_in.i_codec == VLC_CODEC_H264)
-        h264_get_profile_level(&p_dec->fmt_in, &i_h264_profile, NULL, NULL);
+    {
+        uint8_t i_profile;
+        if( h264_get_profile_level(&p_dec->fmt_in, &i_profile, NULL, NULL) )
+            i_h264_profile = i_profile;
+    }
+
     if (pf_init(api) != 0)
     {
         free(api);
@@ -710,9 +729,6 @@ static int OpenDecoder(vlc_object_t *p_this, pf_MediaCodecApi_init pf_init)
         case VLC_CODEC_HEVC:
             p_sys->pf_on_new_block = VideoHEVC_OnNewBlock;
             break;
-        case VLC_CODEC_MP4V:
-            p_sys->pf_on_new_block = VideoMP4V_OnNewBlock;
-            break;
         case VLC_CODEC_VC1:
             p_sys->pf_on_new_block = VideoVC1_OnNewBlock;
             break;
@@ -753,7 +769,7 @@ static int OpenDecoder(vlc_object_t *p_this, pf_MediaCodecApi_init pf_init)
         /* Try first to configure specific Video CSD */
         if (p_dec->fmt_in.i_cat == VIDEO_ES)
             if (ParseVideoExtra(p_dec) != VLC_SUCCESS)
-                return VLC_EGENERIC;
+                goto bailout;
 
         /* Set default CSD if ParseVideoExtra failed to configure one */
         if (!p_sys->pp_csd)
@@ -921,29 +937,6 @@ static int Video_ProcessOutput(decoder_t *p_dec, mc_api_out *p_out,
     {
         picture_t *p_pic = NULL;
 
-        /* Use the aspect ratio provided by the input (ie read from packetizer).
-         * Don't check the current value of the aspect ratio in fmt_out, since we
-         * want to allow changes in it to propagate. */
-        if (p_dec->fmt_in.video.i_sar_num != 0 && p_dec->fmt_in.video.i_sar_den != 0
-         && (p_dec->fmt_out.video.i_sar_num != p_dec->fmt_in.video.i_sar_num ||
-             p_dec->fmt_out.video.i_sar_den != p_dec->fmt_in.video.i_sar_den))
-        {
-            p_dec->fmt_out.video.i_sar_num = p_dec->fmt_in.video.i_sar_num;
-            p_dec->fmt_out.video.i_sar_den = p_dec->fmt_in.video.i_sar_den;
-            p_sys->b_update_format = true;
-        }
-
-        if (p_sys->b_update_format)
-        {
-            p_sys->b_update_format = false;
-            if (decoder_UpdateVideoFormat(p_dec) != 0)
-            {
-                msg_Err(p_dec, "decoder_UpdateVideoFormat failed");
-                p_sys->api->release_out(p_sys->api, p_out->u.buf.i_index, false);
-                return -1;
-            }
-        }
-
         /* If the oldest input block had no PTS, the timestamp of
          * the frame returned by MediaCodec might be wrong so we
          * overwrite it with the corresponding dts. Call FifoGet
@@ -1046,8 +1039,14 @@ static int Video_ProcessOutput(decoder_t *p_dec, mc_api_out *p_out,
             p_sys->u.video.i_slice_height = 0;
             p_sys->u.video.i_stride = p_dec->fmt_out.video.i_width;
         }
-        p_sys->b_update_format = true;
+
         p_sys->b_has_format = true;
+
+        if (decoder_UpdateVideoFormat(p_dec) != 0)
+        {
+            msg_Err(p_dec, "decoder_UpdateVideoFormat failed");
+            return -1;
+        }
         return 0;
     }
 }
@@ -1610,38 +1609,6 @@ static int VideoHEVC_OnNewBlock(decoder_t *p_dec, block_t **pp_block,
     {
         h264_AVC_to_AnnexB(p_block->p_buffer, p_block->i_buffer,
                                p_sys->u.video.i_nal_length_size);
-    }
-
-    return Video_OnNewBlock(p_dec, pp_block, p_flags);
-}
-
-static int VideoMP4V_OnNewBlock(decoder_t *p_dec, block_t **pp_block,
-                                int *p_flags)
-{
-    decoder_sys_t *p_sys = p_dec->p_sys;
-    block_t *p_block = *pp_block;
-
-    /* The first input sent to MediaCodec must be an I-Frame */
-    if (!p_sys->u.video.b_first_mp4v_iframe)
-    {
-        if ((p_block->i_flags & BLOCK_FLAG_TYPE_I))
-            p_sys->u.video.b_first_mp4v_iframe = true;
-        else
-        {
-            static const uint8_t p_mp4v_startcode[3] = {0x00, 0x00, 0x01};
-
-            if (p_block->i_buffer > 6
-             && memcmp(p_mp4v_startcode, p_block->p_buffer, 3) == 0
-             && p_block->p_buffer[3] == 0xb6)
-            {
-                bs_t s;
-                bs_init(&s, &p_block->p_buffer[4], 2);
-                if (bs_read(&s, 2) == 0)
-                    p_sys->u.video.b_first_mp4v_iframe = true;
-            }
-        }
-        if (!p_sys->u.video.b_first_mp4v_iframe)
-             return 0; /* Drop current block */
     }
 
     return Video_OnNewBlock(p_dec, pp_block, p_flags);

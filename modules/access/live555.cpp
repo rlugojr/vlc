@@ -103,7 +103,7 @@ vlc_module_begin ()
 
     add_submodule ()
         set_description( N_("RTSP/RTP access and demux") )
-        add_shortcut( "rtsp", "pnm", "live", "livedotcom", "satip" )
+        add_shortcut( "rtsp", "pnm", "live", "livedotcom" )
         set_capability( "access_demux", 0 )
         set_callbacks( Open, Close )
         add_bool( "rtsp-tcp", false,
@@ -159,7 +159,7 @@ typedef struct
     bool            b_asf;
     block_t         *p_asf_block;
     bool            b_discard_trunc;
-    stream_t        *p_out_muxed;    /* for muxed stream */
+    vlc_demux_chained_t *p_out_muxed;    /* for muxed stream */
 
     uint8_t         *p_buffer;
     unsigned int    i_buffer;
@@ -199,7 +199,7 @@ struct demux_sys_t
 
     /* Weird formats */
     asf_header_t     asfh;
-    stream_t         *p_out_asf;
+    vlc_demux_chained_t *p_out_asf;
     bool             b_real;
 
     /* */
@@ -288,7 +288,7 @@ static int  Open ( vlc_object_t *p_this )
         /* See if it looks like a SDP
            v, o, s fields are mandatory and in this order */
         const uint8_t *p_peek;
-        if( stream_Peek( p_demux->s, &p_peek, 7 ) < 7 ) return VLC_EGENERIC;
+        if( vlc_stream_Peek( p_demux->s, &p_peek, 7 ) < 7 ) return VLC_EGENERIC;
 
         if( memcmp( p_peek, "v=0\r\n", 5 ) &&
             memcmp( p_peek, "v=0\n", 4 ) &&
@@ -337,18 +337,6 @@ static int  Open ( vlc_object_t *p_this )
         while( (p = strchr( p, ' ' )) != NULL ) *p = '+';
     }
 
-    if( strcasecmp( p_demux->psz_access, "satip" ) == 0 )
-    {
-        if( asprintf(&p_sys->p_sdp, "v=0\r\n"
-                     "o=- 0 %s\r\n"
-                     "s=SATIP:stream\r\n"
-                     "i=SATIP RTP Stream\r\n"
-                     "m=video 0 RTP/AVP 33\r\n"
-                     "a=control:rtsp://%s\r\n\r\n",
-                     p_sys->url.psz_host, p_sys->psz_path) < 0 )
-            abort();
-    }
-
     if( p_demux->s != NULL )
     {
         /* Gather the complete sdp file */
@@ -364,7 +352,7 @@ static int  Open ( vlc_object_t *p_this )
 
         for( ;; )
         {
-            int i_read = stream_Read( p_demux->s, &p_sdp[i_sdp],
+            int i_read = vlc_stream_Read( p_demux->s, &p_sdp[i_sdp],
                                       i_sdp_max - i_sdp - 1 );
             if( i_read < 0 )
             {
@@ -451,13 +439,13 @@ static void Close( vlc_object_t *p_this )
     {
         live_track_t *tk = p_sys->track[i];
 
-        if( tk->b_muxed ) stream_Delete( tk->p_out_muxed );
+        if( tk->b_muxed ) vlc_demux_chained_Delete( tk->p_out_muxed );
         es_format_Clean( &tk->fmt );
         free( tk->p_buffer );
         free( tk );
     }
     TAB_CLEAN( p_sys->i_track, p_sys->track );
-    if( p_sys->p_out_asf ) stream_Delete( p_sys->p_out_asf );
+    if( p_sys->p_out_asf ) vlc_demux_chained_Delete( p_sys->p_out_asf );
     delete p_sys->scheduler;
     free( p_sys->p_sdp );
     free( p_sys->psz_path );
@@ -982,8 +970,9 @@ static int SessionsSetup( demux_t *p_demux )
                 {
                     tk->b_asf = true;
                     if( p_sys->p_out_asf == NULL )
-                        p_sys->p_out_asf = stream_DemuxNew( p_demux, "asf",
-                                                            p_demux->out );
+                        p_sys->p_out_asf =
+                            vlc_demux_chained_New( VLC_OBJECT(p_demux), "asf",
+                                                   p_demux->out );
                 }
                 else if( !strcmp( sub->codecName(), "X-QT" ) ||
                          !strcmp( sub->codecName(), "X-QUICKTIME" ) )
@@ -1114,28 +1103,33 @@ static int SessionsSetup( demux_t *p_demux )
                 else if( !strcmp( sub->codecName(), "MP2T" ) )
                 {
                     tk->b_muxed = true;
-                    tk->p_out_muxed = stream_DemuxNew( p_demux, "ts", p_demux->out );
+                    tk->p_out_muxed =
+                        vlc_demux_chained_New( VLC_OBJECT(p_demux), "ts",
+                                               p_demux->out );
                 }
                 else if( !strcmp( sub->codecName(), "MP2P" ) ||
                          !strcmp( sub->codecName(), "MP1S" ) )
                 {
                     tk->b_muxed = true;
-                    tk->p_out_muxed = stream_DemuxNew( p_demux, "ps",
-                                                       p_demux->out );
+                    tk->p_out_muxed =
+                        vlc_demux_chained_New( VLC_OBJECT(p_demux), "ps",
+                                               p_demux->out );
                 }
                 else if( !strcmp( sub->codecName(), "X-ASF-PF" ) )
                 {
                     tk->b_asf = true;
                     if( p_sys->p_out_asf == NULL )
-                        p_sys->p_out_asf = stream_DemuxNew( p_demux, "asf",
-                                                            p_demux->out );;
+                        p_sys->p_out_asf =
+                            vlc_demux_chained_New( VLC_OBJECT(p_demux),
+                                                   "asf", p_demux->out );
                 }
                 else if( !strcmp( sub->codecName(), "DV" ) )
                 {
                     tk->b_muxed = true;
                     tk->b_discard_trunc = true;
-                    tk->p_out_muxed = stream_DemuxNew( p_demux, "rawdv",
-                                                       p_demux->out );
+                    tk->p_out_muxed =
+                        vlc_demux_chained_New( VLC_OBJECT(p_demux), "rawdv",
+                                               p_demux->out );
                 }
                 else if( !strcmp( sub->codecName(), "VP8" ) )
                 {
@@ -1448,7 +1442,7 @@ static int Control( demux_t *p_demux, int i_query, va_list args )
     demux_sys_t *p_sys = p_demux->p_sys;
     int64_t *pi64, i64;
     double  *pf, f;
-    bool *pb, *pb2;
+    bool *pb;
     int *pi_int;
 
     vlc_mutex_locker locker(&p_sys->timeout_mutex); /* (see same in Demux) */
@@ -1573,13 +1567,11 @@ static int Control( demux_t *p_demux, int i_query, va_list args )
 
         case DEMUX_CAN_CONTROL_RATE:
             pb = (bool*)va_arg( args, bool * );
-            pb2 = (bool*)va_arg( args, bool * );
 
             *pb = (p_sys->rtsp != NULL) &&
                     (p_sys->f_npt_length > 0) &&
                     ( !var_GetBool( p_demux, "rtsp-kasenna" ) ||
                       !var_GetBool( p_demux, "rtsp-wmserver" ) );
-            *pb2 = false;
             return VLC_SUCCESS;
 
         case DEMUX_SET_RATE:
@@ -1735,7 +1727,7 @@ static int RollOverTcp( demux_t *p_demux )
     {
         live_track_t *tk = p_sys->track[i];
 
-        if( tk->b_muxed ) stream_Delete( tk->p_out_muxed );
+        if( tk->b_muxed ) vlc_demux_chained_Delete( tk->p_out_muxed );
         if( tk->p_es ) es_out_Del( p_demux->out, tk->p_es );
         if( tk->p_asf_block ) block_Release( tk->p_asf_block );
         es_format_Clean( &tk->fmt );
@@ -1743,7 +1735,7 @@ static int RollOverTcp( demux_t *p_demux )
         free( tk );
     }
     TAB_CLEAN( p_sys->i_track, p_sys->track );
-    if( p_sys->p_out_asf ) stream_Delete( p_sys->p_out_asf );
+    if( p_sys->p_out_asf ) vlc_demux_chained_Delete( p_sys->p_out_asf );
 
     p_sys->ms = NULL;
     p_sys->rtsp = NULL;
@@ -2057,9 +2049,9 @@ static void StreamRead( void *p_private, unsigned int i_size,
         }
 
         if( tk->b_muxed )
-            stream_DemuxSend( tk->p_out_muxed, p_block );
+            vlc_demux_chained_Send( tk->p_out_muxed, p_block );
         else if( tk->b_asf )
-            stream_DemuxSend( p_sys->p_out_asf, p_block );
+            vlc_demux_chained_Send( p_sys->p_out_asf, p_block );
         else
             es_out_Send( p_demux->out, tk->p_es, p_block );
     }
@@ -2210,7 +2202,7 @@ static int ParseASF( demux_t *p_demux )
     asf_HeaderParse( &p_sys->asfh, p_header->p_buffer, p_header->i_buffer );
 
     /* Send it to demuxer */
-    stream_DemuxSend( p_sys->p_out_asf, p_header );
+    vlc_demux_chained_Send( p_sys->p_out_asf, p_header );
 
     free( psz_asf );
     return VLC_SUCCESS;

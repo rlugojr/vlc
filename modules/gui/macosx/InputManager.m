@@ -29,6 +29,7 @@
 #import "MainWindow.h"
 #import "VLCPlaylist.h"
 #import "VLCPlaylistInfo.h"
+#import "ResumeDialogController.h"
 #import "TrackSynchronization.h"
 #import "VideoView.h"
 
@@ -199,6 +200,9 @@ static int InputEvent(vlc_object_t *p_this, const char *psz_var,
                                                             object:nil];
     }
 
+    // Cancel pending resume dialogs
+    [[[VLCMain sharedInstance] resumeDialog] cancel];
+
     input_thread_t *p_input_changed = NULL;
 
     // object is hold here and released then it is dead
@@ -292,8 +296,6 @@ static int InputEvent(vlc_object_t *p_this, const char *psz_var,
         /* Declare user activity.
          This wakes the display if it is off, and postpones display sleep according to the users system preferences
          Available from 10.7.3 */
-
-#ifdef MAC_OS_X_VERSION_10_7
         if ([o_main activeVideoPlayback] && &IOPMAssertionDeclareUserActivity && shouldDisableScreensaver)
         {
             CFStringRef reasonForActivity = CFStringCreateWithCString(kCFAllocatorDefault, _("VLC media playback"), kCFStringEncodingUTF8);
@@ -306,7 +308,6 @@ static int InputEvent(vlc_object_t *p_this, const char *psz_var,
                 msg_Warn(getIntf(), "failed to declare user activity");
 
         }
-#endif
 
         /* prevent the system from sleeping */
         if (systemSleepAssertionID > 0) {
@@ -316,19 +317,19 @@ static int InputEvent(vlc_object_t *p_this, const char *psz_var,
 
         IOReturn success;
         /* work-around a bug in 10.7.4 and 10.7.5, so check for 10.7.x < 10.7.4 and 10.8 */
-        if ((NSAppKitVersionNumber >= 1115.2 && NSAppKitVersionNumber < 1138.45) || OSX_MOUNTAIN_LION || OSX_MAVERICKS || OSX_YOSEMITE || OSX_EL_CAPITAN) {
+        if (NSAppKitVersionNumber < 1115.2) {
+            /* fall-back on the 10.5 mode, which also works on 10.7.4 and 10.7.5 */
+            if ([o_main activeVideoPlayback] && shouldDisableScreensaver)
+                success = IOPMAssertionCreate(kIOPMAssertionTypeNoDisplaySleep, kIOPMAssertionLevelOn, &systemSleepAssertionID);
+            else
+                success = IOPMAssertionCreate(kIOPMAssertionTypeNoIdleSleep, kIOPMAssertionLevelOn, &systemSleepAssertionID);
+        } else {
             CFStringRef reasonForActivity = CFStringCreateWithCString(kCFAllocatorDefault, _("VLC media playback"), kCFStringEncodingUTF8);
             if ([o_main activeVideoPlayback] && shouldDisableScreensaver)
                 success = IOPMAssertionCreateWithName(kIOPMAssertionTypeNoDisplaySleep, kIOPMAssertionLevelOn, reasonForActivity, &systemSleepAssertionID);
             else
                 success = IOPMAssertionCreateWithName(kIOPMAssertionTypeNoIdleSleep, kIOPMAssertionLevelOn, reasonForActivity, &systemSleepAssertionID);
             CFRelease(reasonForActivity);
-        } else {
-            /* fall-back on the 10.5 mode, which also works on 10.7.4 and 10.7.5 */
-            if ([o_main activeVideoPlayback] && shouldDisableScreensaver)
-                success = IOPMAssertionCreate(kIOPMAssertionTypeNoDisplaySleep, kIOPMAssertionLevelOn, &systemSleepAssertionID);
-            else
-                success = IOPMAssertionCreate(kIOPMAssertionTypeNoIdleSleep, kIOPMAssertionLevelOn, &systemSleepAssertionID);
         }
 
         if (success == kIOReturnSuccess)

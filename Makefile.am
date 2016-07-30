@@ -89,7 +89,7 @@ DISTCHECK_CONFIGURE_FLAGS = \
 	--disable-faad --disable-skins2 \
 	--disable-live555 \
 	--disable-lua \
-	--disable-fribidi --disable-glx \
+	--disable-fribidi \
 	--disable-mkv \
 	--with-kde-solid='$${datadir}/kde4/apps'
 
@@ -161,6 +161,7 @@ EXTRA_DIST += \
 	extras/package/macosx/Resources/English.lproj/TimeSelectionPanel.xib \
 	extras/package/macosx/Resources/English.lproj/VideoEffects.xib \
 	extras/package/macosx/Resources/English.lproj/VLCStatusBarIconMainMenu.xib \
+	extras/package/macosx/Resources/English.lproj/VLCRendererDialog.xib \
 	extras/package/macosx/Resources/fspanel/fs_background.png \
 	extras/package/macosx/Resources/fspanel/fs_background@2x.png \
 	extras/package/macosx/Resources/fspanel/fs_exit_fullscreen.png \

@@ -29,7 +29,7 @@
 #include <vlc_dialog.h>
 
 #include <unistd.h>
-#ifdef _POSIX_VERSION
+#if defined( _POSIX_VERSION ) && !defined(__ANDROID__)
 # include <glob.h>
 #endif
 
@@ -38,7 +38,11 @@
 # define FLUIDSYNTH_NOT_A_DLL
 #endif
 
+#ifndef HAVE_FLUIDLITE_H
 #include <fluidsynth.h>
+#else
+#include <fluidlite.h>
+#endif
 
 #define SOUNDFONT_TEXT N_("Sound fonts")
 #define SOUNDFONT_LONGTEXT N_( \

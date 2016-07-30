@@ -103,11 +103,10 @@ if HAVE_PULSE
 access_LTLIBRARIES += libpulsesrc_plugin.la
 endif
 
-libqtsound_plugin_la_SOURCES = access/qtsound.m
-libqtsound_plugin_la_LDFLAGS = -Wl,-framework,QTKit -Wl,-framework,CoreAudio
-if HAVE_QTKIT
-access_LTLIBRARIES += libqtsound_plugin.la
-endif
+libaccess_qtsound_plugin_la_SOURCES = access/qtsound.m
+libaccess_qtsound_plugin_la_LDFLAGS = -Wl,-framework,QTKit -Wl,-framework,CoreAudio
+access_LTLIBRARIES += $(LTLIBaccess_qtsound)
+EXTRA_LTLIBRARIES += libaccess_qtsound_plugin.la
 
 libaccess_wasapi_plugin_la_SOURCES = access/wasapi.c
 libaccess_wasapi_plugin_la_LIBADD = -lole32 -lksuser
@@ -121,8 +120,8 @@ endif
 ### Video capture ###
 
 libavcapture_plugin_la_SOURCES = access/avcapture.m
-libavcapture_plugin_la_LDFLAGS = \
-	-Wl,-framework,AVFoundation -Wl,-framework,CoreMedia
+libavcapture_plugin_la_OBJCFLAGS = $(AM_OBJCFLAGS) -fobjc-arc
+libavcapture_plugin_la_LDFLAGS = $(AM_LDFLAGS) -rpath '$(accessdir)' -Wl,-framework,Foundation -Wl,-framework,AVFoundation -Wl,-framework,CoreMedia,  -Wl,-framework,CoreVideo
 if HAVE_AVFOUNDATION
 access_LTLIBRARIES += libavcapture_plugin.la
 endif
@@ -443,6 +442,9 @@ access_LTLIBRARIES += libavio_plugin.la
 endif
 endif
 
+libsatip_plugin_la_SOURCES = access/satip.c
+libsatip_plugin_la_LIBADD = $(SOCKET_LIBS) $(LIBPTHREAD)
+EXTRA_LTLIBRARIES += libsatip_plugin.la
 
 ### Misc ###
 

@@ -57,7 +57,6 @@
 #include "dialogs/external.hpp"
 #include "dialogs/epg.hpp"
 #include "dialogs/errors.hpp"
-#include "dialogs/renderer.hpp"
 
 #include <QEvent>
 #include <QApplication>
@@ -118,7 +117,7 @@ DialogsProvider::~DialogsProvider()
 void DialogsProvider::quit()
 {
     b_isDying = true;
-    libvlc_Quit( p_intf->p_libvlc );
+    libvlc_Quit( p_intf->obj.libvlc );
 }
 
 void DialogsProvider::customEvent( QEvent *event )
@@ -154,8 +153,6 @@ void DialogsProvider::customEvent( QEvent *event )
            bookmarksDialog(); break;
         case INTF_DIALOG_EXTENDED:
            extendedDialog(); break;
-        case INTF_DIALOG_RENDERER:
-           rendererDialog(); break;
         case INTF_DIALOG_SENDKEY:
            sendKey( de->i_arg ); break;
 #ifdef ENABLE_VLM
@@ -235,11 +232,6 @@ void DialogsProvider::extendedDialog()
         extDialog->showTab( 0 );
     else
         extDialog->hide();
-}
-
-void DialogsProvider::rendererDialog()
-{
-    RendererDialog::getInstance( p_intf )->toggleVisible();
 }
 
 void DialogsProvider::synchroDialog()
@@ -865,5 +857,5 @@ void DialogsProvider::sendKey( int key )
      }
 
      // forward key to vlc core when not a key accelerator
-     var_SetInteger( p_intf->p_libvlc, "key-pressed", key );
+     var_SetInteger( p_intf->obj.libvlc, "key-pressed", key );
 }

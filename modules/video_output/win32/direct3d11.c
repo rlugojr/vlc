@@ -723,11 +723,16 @@ static void Prepare(vout_display_t *vd, picture_t *picture, subpicture_t *subpic
 
         D3D11_BOX box;
         box.left   = picture->format.i_x_offset;
-        box.right  = picture->format.i_x_offset + picture->format.i_visible_width;
+        /* box.right  = picture->format.i_x_offset + picture->format.i_visible_width; */
         box.top    = picture->format.i_y_offset;
-        box.bottom = picture->format.i_y_offset + picture->format.i_visible_height;
+        /* box.bottom = picture->format.i_y_offset + picture->format.i_visible_height; */
         box.back = 1;
         box.front = 0;
+
+        D3D11_TEXTURE2D_DESC dstDesc;
+        ID3D11Texture2D_GetDesc(sys->picQuad.pTexture, &dstDesc);
+        box.bottom = box.top  + dstDesc.Height;
+        box.right  = box.left + dstDesc.Width;
 
         ID3D11DeviceContext_CopySubresourceRegion(sys->d3dcontext,
                                                   (ID3D11Resource*) sys->picQuad.pTexture,
@@ -1518,6 +1523,19 @@ static int AllocQuad(vout_display_t *vd, const video_format_t *fmt, d3d_quad_t *
     texDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
     texDesc.MiscFlags = 0;
 
+    /* remove half pixels, we don't want green lines */
+    const vlc_chroma_description_t *p_chroma_desc = vlc_fourcc_GetChromaDescription( fmt->i_chroma );
+    for (unsigned plane = 0; plane < p_chroma_desc->plane_count; ++plane)
+    {
+        unsigned i_extra;
+        i_extra = (texDesc.Width  * p_chroma_desc->p[plane].w.num) % p_chroma_desc->p[plane].w.den;
+        if ( i_extra )
+            texDesc.Width -= p_chroma_desc->p[plane].w.den / p_chroma_desc->p[plane].w.num - i_extra;
+        i_extra = (texDesc.Height  * p_chroma_desc->p[plane].h.num) % p_chroma_desc->p[plane].h.den;
+        if ( i_extra )
+            texDesc.Height -= p_chroma_desc->p[plane].h.den / p_chroma_desc->p[plane].h.num - i_extra;
+    }
+
     hr = ID3D11Device_CreateTexture2D(sys->d3ddevice, &texDesc, NULL, &quad->pTexture);
     if (FAILED(hr)) {
         msg_Err(vd, "Could not Create the D3d11 Texture. (hr=0x%lX)", hr);
@@ -1609,15 +1627,30 @@ error:
 static void ReleaseQuad(d3d_quad_t *quad)
 {
     if (quad->pVertexBuffer)
+    {
         ID3D11Buffer_Release(quad->pVertexBuffer);
+        quad->pVertexBuffer = NULL;
+    }
     if (quad->pTexture)
+    {
         ID3D11Texture2D_Release(quad->pTexture);
+        quad->pTexture = NULL;
+    }
     if (quad->d3dresViewY)
+    {
         ID3D11ShaderResourceView_Release(quad->d3dresViewY);
+        quad->d3dresViewY = NULL;
+    }
     if (quad->d3dresViewUV)
+    {
         ID3D11ShaderResourceView_Release(quad->d3dresViewUV);
+        quad->d3dresViewUV = NULL;
+    }
     if (quad->d3dpixelShader)
+    {
         ID3D11VertexShader_Release(quad->d3dpixelShader);
+        quad->d3dpixelShader = NULL;
+    }
 }
 
 static void Direct3D11DestroyResources(vout_display_t *vd)
@@ -1633,15 +1666,25 @@ static void Direct3D11DestroyResources(vout_display_t *vd)
     sys->d3dregion_count = 0;
 
     if (sys->d3drenderTargetView)
+    {
         ID3D11RenderTargetView_Release(sys->d3drenderTargetView);
+        sys->d3drenderTargetView = NULL;
+    }
     if (sys->d3ddepthStencilView)
+    {
         ID3D11DepthStencilView_Release(sys->d3ddepthStencilView);
+        sys->d3ddepthStencilView = NULL;
+    }
     if (sys->pSPUPixelShader)
+    {
         ID3D11VertexShader_Release(sys->pSPUPixelShader);
+        sys->pSPUPixelShader = NULL;
+    }
 #if defined(HAVE_ID3D11VIDEODECODER) && VLC_WINSTORE_APP
     if( sys->context_lock > 0 )
     {
         CloseHandle( sys->context_lock );
+        sys->context_lock = INVALID_HANDLE_VALUE;
     }
 #endif
 

@@ -90,7 +90,7 @@ void matroska_segment_c::ParseSeekHead( KaxSeekHead *seekhead )
 
     i_seekhead_count++;
 
-    stream_Control( sys.demuxer.s, STREAM_CAN_SEEK, &b_seekable );
+    vlc_stream_Control( sys.demuxer.s, STREAM_CAN_SEEK, &b_seekable );
     if( !b_seekable )
         return;
 
@@ -587,6 +587,19 @@ void matroska_segment_c::ParseTrackEntry( KaxTrackEntry *m )
         {
             vars.tk->f_fps = __MAX( static_cast<float>( vfps ), 1 );
             debug( vars, "fps=%f", vars.tk->f_fps );
+        }
+        E_CASE( KaxVideoColourSpace, colourspace )
+        {
+            if ( colourspace.ValidateSize() )
+            {
+                char clrspc[5];
+
+                vars.tk->fmt.i_codec = GetFOURCC( colourspace.GetBuffer() );
+
+                vlc_fourcc_to_char( vars.tk->fmt.i_codec, clrspc );
+                clrspc[4]  = '\0';
+                debug( vars, "Colour Space=%s", clrspc );
+            }
         }
         E_CASE( KaxTrackAudio, tka ) {
             vars.tk->fmt.audio.i_channels = 1;
@@ -1275,6 +1288,12 @@ int32_t matroska_segment_c::TrackInit( mkv_track_t * p_tk )
                     vars.p_fmt->p_extra = xmalloc( vars.p_fmt->i_extra );
                     memcpy( vars.p_fmt->p_extra, &p_bih[1], vars.p_fmt->i_extra );
                 }
+                else if( vars.p_fmt->i_codec == VLC_FOURCC('W','V','C','1') )
+                {
+                    vars.p_fmt->video.i_width = 0;
+                    vars.p_fmt->video.i_height = 0;
+                    vars.p_fmt->b_packetized = false;
+                }
             }
             vars.p_tk->b_dts_only = true;
         }
@@ -1343,7 +1362,7 @@ int32_t matroska_segment_c::TrackInit( mkv_track_t * p_tk )
         }
         S_CASE("V_QUICKTIME") {
             MP4_Box_t *p_box = (MP4_Box_t*)xmalloc( sizeof( MP4_Box_t ) );
-            stream_t *p_mp4_stream = stream_MemoryNew( VLC_OBJECT(vars.p_demuxer),
+            stream_t *p_mp4_stream = vlc_stream_MemoryNew( VLC_OBJECT(vars.p_demuxer),
                                                        vars.p_tk->p_extra_data,
                                                        vars.p_tk->i_extra_data,
                                                        true );
@@ -1367,10 +1386,13 @@ int32_t matroska_segment_c::TrackInit( mkv_track_t * p_tk )
             {
                 free( p_box );
             }
-            stream_Delete( p_mp4_stream );
+            vlc_stream_Delete( p_mp4_stream );
         }
         S_CASE("V_MJPEG") {
             vars.p_fmt->i_codec = VLC_CODEC_MJPG;
+        }
+        S_CASE("V_UNCOMPRESSED") {
+            msg_Dbg( vars.p_demuxer, "uncompressed format detected");
         }
         S_CASE("A_MS/ACM") {
             mkv_track_t * p_tk = vars.p_tk;

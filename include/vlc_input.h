@@ -131,7 +131,7 @@ static inline void vlc_input_title_Delete( input_title_t *t )
 static inline input_title_t *vlc_input_title_Duplicate( const input_title_t *t )
 {
     input_title_t *dup = vlc_input_title_New( );
-    int i;
+    if( dup == NULL) return NULL;
 
     if( t->psz_name ) dup->psz_name = strdup( t->psz_name );
     dup->i_flags     = t->i_flags;
@@ -141,7 +141,7 @@ static inline input_title_t *vlc_input_title_Duplicate( const input_title_t *t )
         dup->seekpoint = (seekpoint_t**)malloc( t->i_seekpoint * sizeof(seekpoint_t*) );
         if( likely(dup->seekpoint) )
         {
-            for( i = 0; i < t->i_seekpoint; i++ )
+            for( int i = 0; i < t->i_seekpoint; i++ )
                 dup->seekpoint[i] = vlc_seekpoint_Duplicate( t->seekpoint[i] );
             dup->i_seekpoint = t->i_seekpoint;
         }
@@ -272,7 +272,7 @@ struct input_thread_t
  * The read-write variables are:
  *  - state (\see input_state_e)
  *  - rate
- *  - position, position-offset
+ *  - position
  *  - time, time-offset
  *  - title, next-title, prev-title
  *  - chapter, next-chapter, next-chapter-prev

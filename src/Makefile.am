@@ -262,15 +262,13 @@ SOURCES_libvlc_darwin = \
 SOURCES_libvlc_android = \
 	linux/cpu.c \
 	linux/dirs.c \
-	android/dirs.c \
 	linux/thread.c \
 	android/thread.c \
 	android/error.c \
 	posix/filesystem.c \
-	android/netconf.c \
 	posix/plugin.c \
 	posix/timer.c \
-	android/specific.c \
+	android/specific.c  \
 	posix/rand.c \
 	$(NULL)
 
@@ -358,6 +356,7 @@ SOURCES_libvlc_common = \
 	input/decoder.c \
 	input/decoder_synchro.c \
 	input/demux.c \
+	input/demux_chained.c \
 	input/es_out.c \
 	input/es_out_timeshift.c \
 	input/event.c \
@@ -380,7 +379,7 @@ SOURCES_libvlc_common = \
 	input/resource.c \
 	input/stats.c \
 	input/stream.c \
-	input/stream_demux.c \
+	input/stream_fifo.c \
 	input/stream_filter.c \
 	input/stream_memory.c \
 	input/subtitles.c \

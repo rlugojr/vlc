@@ -48,17 +48,12 @@
     [o_title_lbl setStringValue:_NS("Continue playback?")];
     [o_resume_btn setTitle:_NS("Continue")];
 
-    [o_always_resume_btn setTitle:_NS("Always continue")];
+    [o_always_resume_chk setTitle:_NS("Always continue media playback")];
 }
 
 - (void)showWindowWithItem:(input_item_t *)p_item withLastPosition:(NSInteger)pos completionBlock:(CompletionBlock)block
 {
     NSWindow *w = [self window];
-
-    if ([w isVisible]) {
-        msg_Err(getIntf(), "Resume dialog in use already");
-        return;
-    }
 
     currentResumeTimeout = 10;
     completionBlock = [block copy];
@@ -73,12 +68,13 @@
     free(psz_title_name);
     NSString *labelString = [NSString stringWithFormat:_NS("Playback of \"%@\" will continue at %@"), o_title, [[VLCStringUtility sharedInstance] stringForTime:pos]];
     [o_text_lbl setStringValue:labelString];
+    [o_always_resume_chk setState: NSOffState];
 
-    NSTimer *timer = [NSTimer scheduledTimerWithTimeInterval:1
-                                             target:self
-                                           selector:@selector(updateAlertWindow:)
-                                           userInfo:nil
-                                            repeats:YES];
+    o_countdown_timer = [NSTimer scheduledTimerWithTimeInterval:1
+                                                         target:self
+                                                       selector:@selector(updateAlertWindow:)
+                                                       userInfo:nil
+                                                        repeats:YES];
 
     [w setLevel:[[[VLCMain sharedInstance] voutController] currentStatusWindowLevel]];
     [w center];
@@ -109,8 +105,6 @@
         resumeResult = RESUME_RESTART;
     else if (sender == o_resume_btn)
         resumeResult = RESUME_NOW;
-    else
-        resumeResult = RESUME_ALWAYS;
 
     [[self window] close];
 
@@ -120,10 +114,30 @@
     }
 }
 
+- (IBAction)resumeSettingChanged:(id)sender
+{
+    int newState = [sender state] == NSOnState ? 1 : 0;
+    msg_Dbg(getIntf(), "Changing resume setting to %i", newState);
+    config_PutInt(getIntf(), "macosx-continue-playback", newState);
+}
+
 - (void)updateCocoaWindowLevel:(NSInteger)i_level
 {
     if (self.isWindowLoaded && [self.window isVisible] && [self.window level] != i_level)
         [self.window setLevel: i_level];
+}
+
+- (void)cancel
+{
+    if (![self isWindowLoaded])
+        return;
+
+    if (o_countdown_timer != nil) {
+        [o_countdown_timer invalidate];
+        o_countdown_timer = nil;
+    }
+
+    [[self window] close];
 }
 
 @end

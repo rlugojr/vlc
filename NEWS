@@ -44,6 +44,7 @@ Access:
  * Named pipes and device nodes are no longer included in directory listings
    by default. Use --list-special-files to include them back.
  * Support for timeout in UDP input --udp-timeout=<seconds>
+ * New SAT>IP access module, to receive DVB-S via IP networks
 
 Decoder:
  * OMX GPU-zerocopy support for decoding and display on Android using OpenMax IL
@@ -101,6 +102,9 @@ Stream filter:
  * Added stream prebuffering plugin
  * Removed HTTP Live streaming stream filter
  * Added zlib (a.k.a. deflate) decompression filter
+ 
+Demux filter:
+ * Added a demuxer filter chain to filter or intercept control commands and demuxing
 
 Audio output:
  * Complete rewrite of the AudioTrack Android module. This is now the default.
@@ -110,6 +114,7 @@ Audio output:
 
 Audio filters and output:
  * Add SoX Resampler library audio filter module (converter and resampler)
+ * a52tospdif and dtstospdif audio converters are merged into tospdif
 
 Video ouput:
  * Linux/BSD default video output is now OpenGL, instead of Xvideo

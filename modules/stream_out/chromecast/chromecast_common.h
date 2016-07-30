@@ -1,9 +1,11 @@
 /*****************************************************************************
- * dirs.c: Android directories configuration
+ * chromecast_common.h: Chromecast common code between modules for vlc
  *****************************************************************************
- * Copyright © 2012 Rafaël Carré
+ * Copyright © 2015-2016 VideoLAN
  *
- * Authors: Rafaël Carré <funman@videolanorg>
+ * Authors: Adrien Maglo <magsoft@videolan.org>
+ *          Jean-Baptiste Kempf <jb@videolan.org>
+ *          Steve Lhomme <robux4@videolabs.io>
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU Lesser General Public License as published by
@@ -20,38 +22,40 @@
  * Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
 
-#ifdef HAVE_CONFIG_H
-# include "config.h"
-#endif
+#ifndef VLC_CHROMECAST_COMMON_H
+#define VLC_CHROMECAST_COMMON_H
 
-#include <vlc_common.h>
+#include <vlc_input.h>
 
-#include "config/configuration.h"
+# ifdef __cplusplus
+extern "C" {
+# endif
 
-#include <string.h>
+static const char *CC_SHARED_VAR_NAME = "cc_sout";
 
-char *config_GetUserDir (vlc_userdir_t type)
+typedef struct
 {
-    switch (type)
-    {
-        case VLC_DATA_DIR:
-            return strdup("/sdcard/Android/data/org.videolan.vlc");
-        case VLC_CACHE_DIR:
-            return strdup("/sdcard/Android/data/org.videolan.vlc/cache");
+    void *p_opaque;
 
-        case VLC_HOME_DIR:
-        case VLC_CONFIG_DIR:
-            return NULL;
+    void (*pf_set_length)(void*, mtime_t length);
+    mtime_t (*pf_get_time)(void*);
+    double (*pf_get_position)(void*);
 
-        case VLC_DESKTOP_DIR:
-        case VLC_DOWNLOAD_DIR:
-        case VLC_TEMPLATES_DIR:
-        case VLC_PUBLICSHARE_DIR:
-        case VLC_DOCUMENTS_DIR:
-        case VLC_MUSIC_DIR:
-        case VLC_PICTURES_DIR:
-        case VLC_VIDEOS_DIR:
-            return NULL;
-    }
-    return NULL;
+    void (*pf_wait_app_started)(void*);
+
+    void (*pf_request_seek)(void*, mtime_t pos);
+    void (*pf_wait_seek_done)(void*);
+
+    void (*pf_set_pause_state)(void*, bool paused);
+
+    void (*pf_set_title)(void*, const char *psz_title);
+    void (*pf_set_artwork)(void*, const char *psz_artwork);
+
+} chromecast_common;
+
+# ifdef __cplusplus
 }
+# endif
+
+#endif // VLC_CHROMECAST_COMMON_H
+

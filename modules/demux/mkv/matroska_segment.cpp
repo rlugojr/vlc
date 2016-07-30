@@ -639,7 +639,8 @@ bool matroska_segment_c::Preload( )
             IndexAppendCluster( cluster );
 
             // add first cluster as trusted seekpoint for all tracks
-            for( tracks_map_t::iterator it = tracks.begin(); it != tracks.end(); ++it )
+            for( tracks_map_t::const_iterator it = tracks.begin();
+                 it != tracks.end(); ++it )
             {
                 _seeker.add_seekpoint( it->first, SegmentSeeker::Seekpoint::TRUSTED,
                   cluster->GetElementPosition(), 0 );
@@ -828,7 +829,7 @@ void matroska_segment_c::Seek( mtime_t i_absolute_mk_date, mtime_t i_mk_time_off
 
     // initialize seek information in order to set up playback //
 
-    for( SegmentSeeker::tracks_seekpoint_t::iterator it = seekpoints.begin(); it != seekpoints.end(); ++it )
+    for( SegmentSeeker::tracks_seekpoint_t::const_iterator it = seekpoints.begin(); it != seekpoints.end(); ++it )
     {
         mkv_track_t& track = tracks[ it->first ];
 
@@ -889,9 +890,10 @@ void matroska_segment_c::ComputeTrackPriority()
     bool b_has_default_video = false;
     bool b_has_default_audio = false;
     /* check for default */
-    for( tracks_map_t::iterator it = tracks.begin(); it != tracks.end(); ++it )
+    for( tracks_map_t::const_iterator it = tracks.begin(); it != tracks.end();
+         ++it )
     {
-        tracks_map_t::mapped_type& track = it->second;
+        const tracks_map_t::mapped_type& track = it->second;
 
         bool flag = track.b_enabled && ( track.b_default || track.b_forced );
 
@@ -904,8 +906,8 @@ void matroska_segment_c::ComputeTrackPriority()
 
     for( tracks_map_t::iterator it = tracks.begin(); it != tracks.end(); ++it )
     {
-        tracks_map_t::key_type    track_id = it->first;
-        tracks_map_t::mapped_type track    = it->second;
+        tracks_map_t::key_type     track_id = it->first;
+        tracks_map_t::mapped_type& track    = it->second;
 
         if( unlikely( track.fmt.i_cat == UNKNOWN_ES || !track.psz_codec ) )
         {
@@ -977,7 +979,7 @@ void matroska_segment_c::EnsureDuration()
 
     bool b_seekable;
 
-    stream_Control( sys.demuxer.s, STREAM_CAN_FASTSEEK, &b_seekable );
+    vlc_stream_Control( sys.demuxer.s, STREAM_CAN_FASTSEEK, &b_seekable );
     if ( !b_seekable )
     {
         msg_Warn( &sys.demuxer, "could not look for the segment duration" );
@@ -1247,8 +1249,9 @@ int matroska_segment_c::BlockGet( KaxBlock * & pp_block, KaxSimpleBlock * & pp_s
         E_CASE_DEFAULT( element )
         {
             VLC_UNUSED(element);
-            msg_Err( vars.p_demuxer, "invalid level = %d", vars.obj->ep->GetLevel() );
-            throw VLC_EGENERIC;
+
+            msg_Warn( vars.p_demuxer, "unknown element at { fpos: %" PRId64 ", '%s' }",
+              element.GetElementPosition(), typeid( element ).name() );
         }
     };
 

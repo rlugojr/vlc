@@ -41,12 +41,15 @@
 #import <vlc_services_discovery.h>
 #import "PLModel.h"
 
+#import "PXSourceList.h"
+#import "PXSourceListDataSource.h"
+
 #import "ControlsBar.h"
 #import "VideoView.h"
 #import "VLCVoutWindowController.h"
 
 
-@interface VLCMainWindow() <PXSourceListDataSource, PXSourceListDelegate, NSWindowDelegate, NSAnimationDelegate, NSSplitViewDelegate>
+@interface VLCMainWindow() <PXSourceListDataSource, PXSourceListDelegate, NSOutlineViewDataSource, NSOutlineViewDelegate, NSWindowDelegate, NSAnimationDelegate, NSSplitViewDelegate>
 {
     BOOL videoPlaybackEnabled;
     BOOL dropzoneActive;
@@ -974,7 +977,11 @@ static const float f_min_window_height = 307.;
 
     NSDate *date = [NSDate dateWithTimeIntervalSince1970:mt_duration];
     NSDateFormatter *formatter = [[NSDateFormatter alloc] init];
-    [formatter setDateFormat:@"HH:mm:ss"];
+    if (mt_duration >= 86400) {
+        [formatter setDateFormat:@"dd:HH:mm:ss"];
+    } else {
+        [formatter setDateFormat:@"HH:mm:ss"];
+    }
     [formatter setTimeZone:[NSTimeZone timeZoneForSecondsFromGMT:0]];
 
     return [NSString stringWithFormat:@" — %@",[formatter stringFromDate:date]];

@@ -25,7 +25,6 @@
 
 @implementation VLCHUDSliderCell
 
-
 - (instancetype)initWithCoder:(NSCoder *)coder
 {
     self = [super initWithCoder:coder];
@@ -35,7 +34,6 @@
         _disabledSliderColor    = [NSColor colorWithCalibratedRed:0.318 green:0.318 blue:0.318 alpha:0.2];
         _strokeColor            = [NSColor colorWithCalibratedRed:0.749 green:0.761 blue:0.788 alpha:1.0];
         _disabledStrokeColor    = [NSColor colorWithCalibratedRed:0.749 green:0.761 blue:0.788 alpha:0.2];
-
 
         // Custom knob gradients
         _knobGradient           = [[NSGradient alloc] initWithStartingColor:[NSColor colorWithDeviceRed:0.251 green:0.251 blue:0.255 alpha:1.0]
@@ -142,11 +140,54 @@ NSAffineTransform* RotationTransform(const CGFloat angle, const NSPoint point)
     [path stroke];
 }
 
-/*
-- (void) drawFocusRingMaskWithFrame:(NSRect)cellFrame inView:(NSView *)controlView
+- (void)drawBarInside:(NSRect)fullRect flipped:(BOOL)flipped
 {
+    NSBezierPath *path;
 
+    // Determine current position of knob
+    CGFloat knobPosition = (self.doubleValue - self.minValue) / (self.maxValue - self.minValue);
+
+    // Copy rect
+    NSRect activeRect = fullRect;
+
+    // Do not draw disabled part for sliders with tickmarks
+    if (self.numberOfTickMarks == 0) {
+        if (self.isVertical) {
+            // Calculate active rect (bottom part of slider)
+            if (flipped) {
+                activeRect.origin.y = (1 - knobPosition) * activeRect.size.height;
+                activeRect.size.height -= activeRect.origin.y - 1;
+            } else {
+                activeRect.size.height -= (1 - knobPosition) * activeRect.size.height - 1;
+            }
+        } else {
+            // Calculate active rect (left part of slider)
+            activeRect.size.width = knobPosition * (self.controlView.frame.size.width - 1.0);
+        }
+
+        // Draw inactive bar
+        [_disabledSliderColor setFill];
+        path = [NSBezierPath bezierPathWithRoundedRect:fullRect xRadius:2.0 yRadius:2.0];
+        [path fill];
+    }
+
+    // Draw active bar
+    [_sliderColor setFill];
+    path = [NSBezierPath bezierPathWithRoundedRect:activeRect xRadius:2.0 yRadius:2.0];
+    [path fill];
 }
-*/
+
+- (void)drawTickMarks
+{
+    for (int i = 0; i < self.numberOfTickMarks; i++) {
+        NSRect tickMarkRect = [self rectOfTickMarkAtIndex:i];
+        if (self.isEnabled) {
+            [_strokeColor setFill];
+        } else {
+            [_disabledStrokeColor setFill];
+        }
+        NSRectFill(tickMarkRect);
+    }
+}
 
 @end

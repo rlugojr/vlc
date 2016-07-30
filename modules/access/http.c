@@ -71,24 +71,6 @@ static void Close( vlc_object_t * );
     "Automatically try to reconnect to the stream in case of a sudden " \
     "disconnect." )
 
-#define CONTINUOUS_TEXT N_("Continuous stream")
-#define CONTINUOUS_LONGTEXT N_("Read a file that is " \
-    "being constantly updated (for example, a JPG file on a server). " \
-    "You should not globally enable this option as it will break all other " \
-    "types of HTTP streams." )
-
-#define FORWARD_COOKIES_TEXT N_("Forward Cookies")
-#define FORWARD_COOKIES_LONGTEXT N_("Forward Cookies across http redirections.")
-
-#define REFERER_TEXT N_("HTTP referer value")
-#define REFERER_LONGTEXT N_("Customize the HTTP referer, simulating a previous document")
-
-#define UA_TEXT N_("User Agent")
-#define UA_LONGTEXT N_("The name and version of the program will be " \
-    "provided to the HTTP server. They must be separated by a forward " \
-    "slash, e.g. FooBar/1.2.3. This option can only be specified per input " \
-    "item, not globally.")
-
 vlc_module_begin ()
     set_description( N_("HTTP input") )
     set_capability( "access", 0 )
@@ -101,18 +83,8 @@ vlc_module_begin ()
     add_password( "http-proxy-pwd", NULL,
                   PROXY_PASS_TEXT, PROXY_PASS_LONGTEXT, false )
     add_obsolete_bool( "http-use-IE-proxy" )
-    add_string( "http-referrer", NULL, REFERER_TEXT, REFERER_LONGTEXT, false )
-        change_safe()
-    add_string( "http-user-agent", NULL, UA_TEXT, UA_LONGTEXT, false )
-        change_safe()
-        change_private()
     add_bool( "http-reconnect", false, RECONNECT_TEXT,
               RECONNECT_LONGTEXT, true )
-    add_bool( "http-continuous", false, CONTINUOUS_TEXT,
-              CONTINUOUS_LONGTEXT, true )
-        change_safe()
-    add_bool( "http-forward-cookies", true, FORWARD_COOKIES_TEXT,
-              FORWARD_COOKIES_LONGTEXT, true )
     /* 'itpc' = iTunes Podcast */
     add_shortcut( "http", "https", "unsv", "itpc", "icyx" )
     set_callbacks( Open, Close )
@@ -147,7 +119,6 @@ struct access_sys_t
 
     char       *psz_mime;
     char       *psz_location;
-    bool b_mms;
     bool b_icecast;
 
     bool b_chunked;
@@ -159,7 +130,6 @@ struct access_sys_t
     char       *psz_icy_genre;
     char       *psz_icy_title;
 
-    uint64_t i_remaining;
     uint64_t offset;
     uint64_t size;
 
@@ -169,18 +139,16 @@ struct access_sys_t
     bool b_seekable;
     bool b_reconnect;
     bool b_continuous;
-    bool b_pace_control;
     bool b_has_size;
 };
 
 /* */
-static ssize_t Read( access_t *, uint8_t *, size_t );
+static ssize_t Read( access_t *, void *, size_t );
 static int Seek( access_t *, uint64_t );
 static int Control( access_t *, int, va_list );
 
 /* */
 static int Connect( access_t *, uint64_t );
-static int Request( access_t *p_access, uint64_t i_tell );
 static void Disconnect( access_t * );
 
 
@@ -210,14 +178,12 @@ static int Open( vlc_object_t *p_this )
     p_sys->psz_proxy_passbuf = NULL;
     p_sys->b_seekable = true;
     p_sys->psz_mime = NULL;
-    p_sys->b_mms = false;
     p_sys->b_icecast = false;
     p_sys->psz_location = NULL;
     p_sys->psz_user_agent = NULL;
     p_sys->psz_referrer = NULL;
     p_sys->psz_username = NULL;
     p_sys->psz_password = NULL;
-    p_sys->b_pace_control = true;
     p_sys->p_creds = NULL;
     p_sys->p_tls = NULL;
     p_sys->i_icy_meta = 0;
@@ -225,11 +191,9 @@ static int Open( vlc_object_t *p_this )
     p_sys->psz_icy_name = NULL;
     p_sys->psz_icy_genre = NULL;
     p_sys->psz_icy_title = NULL;
-    p_sys->i_remaining = 0;
     p_sys->b_has_size = false;
     p_sys->offset = 0;
     p_sys->size = 0;
-    p_access->info.b_eof  = false;
     p_access->p_sys = p_sys;
 
     /* Only forward an store cookies if the corresponding option is activated */
@@ -418,17 +382,6 @@ connect:
         goto error;
     }
 
-    if( p_sys->p_creds == NULL && p_sys->b_mms )
-    {
-        msg_Dbg( p_access, "redirecting to MMS plug-in" );
-
-        if( unlikely(asprintf( &p_access->psz_url, "mmsh://%s",
-                               p_access->psz_location ) == -1) )
-            p_access->psz_url = NULL;
-        ret = VLC_ACCESS_REDIRECT;
-        goto error;
-    }
-
     if( p_sys->b_reconnect ) msg_Dbg( p_access, "auto re-connect enabled" );
 
     /* Set up p_access */
@@ -494,7 +447,7 @@ static void Close( vlc_object_t *p_this )
 
 /* Read data from the socket taking care of chunked transfer if needed */
 static int ReadData( access_t *p_access, int *pi_read,
-                     uint8_t *p_buffer, size_t i_len )
+                     void *p_buffer, size_t i_len )
 {
     access_sys_t *p_sys = p_access->p_sys;
     if( p_sys->b_chunked )
@@ -558,27 +511,16 @@ static int ReadData( access_t *p_access, int *pi_read,
  * p_buffer. Return the actual number of bytes read
  *****************************************************************************/
 static int ReadICYMeta( access_t *p_access );
-static ssize_t Read( access_t *p_access, uint8_t *p_buffer, size_t i_len )
+static ssize_t Read( access_t *p_access, void *p_buffer, size_t i_len )
 {
     access_sys_t *p_sys = p_access->p_sys;
     int i_read;
 
     if( p_sys->fd == -1 )
-        goto fatal;
+        return 0;
 
-    if( p_sys->b_has_size )
-    {
-        /* Remaining bytes in the file */
-        uint64_t remainder = p_sys->size - p_sys->offset;
-        if( remainder < i_len )
-            i_len = remainder;
-
-        /* Remaining bytes in the response */
-        if( p_sys->i_remaining < i_len )
-            i_len = p_sys->i_remaining;
-    }
     if( i_len == 0 )
-        goto fatal;
+        return 0;
 
     if( p_sys->i_icy_meta > 0 && p_sys->offset - p_sys->i_icy_offset > 0 )
     {
@@ -588,14 +530,14 @@ static ssize_t Read( access_t *p_access, uint8_t *p_buffer, size_t i_len )
         if( i_next == p_sys->i_icy_meta )
         {
             if( ReadICYMeta( p_access ) )
-                goto fatal;
+                return 0;
         }
         if( i_len > i_next )
             i_len = i_next;
     }
 
     if( ReadData( p_access, &i_read, p_buffer, i_len ) )
-        goto fatal;
+        return 0;
 
     if( i_read < 0 )
         return -1; /* EINTR / EAGAIN */
@@ -611,23 +553,13 @@ static ssize_t Read( access_t *p_access, uint8_t *p_buffer, size_t i_len )
             else
                 return -1;
         }
-        goto fatal;
+        return 0;
     }
 
     assert( i_read >= 0 );
     p_sys->offset += i_read;
-    if( p_sys->b_has_size )
-    {
-        assert( p_sys->offset <= p_sys->size );
-        assert( (unsigned)i_read <= p_sys->i_remaining );
-        p_sys->i_remaining -= i_read;
-    }
 
     return i_read;
-
-fatal:
-    p_access->info.b_eof = true;
-    return 0;
 }
 
 static int ReadICYMeta( access_t *p_access )
@@ -723,14 +655,12 @@ static int Seek( access_t *p_access, uint64_t i_pos )
         if( retval == VLC_SUCCESS ) {
             uint8_t p_buffer[2];
             Read( p_access, p_buffer, 1);
-            p_access->info.b_eof  = false;
         }
         return retval;
     }
     if( Connect( p_access, i_pos ) )
     {
         msg_Err( p_access, "seek failed" );
-        p_access->info.b_eof = true;
         return VLC_EGENERIC;
     }
     return VLC_SUCCESS;
@@ -748,33 +678,28 @@ static int Control( access_t *p_access, int i_query, va_list args )
     switch( i_query )
     {
         /* */
-        case ACCESS_CAN_SEEK:
+        case STREAM_CAN_SEEK:
             pb_bool = (bool*)va_arg( args, bool* );
             *pb_bool = p_sys->b_seekable;
             break;
-        case ACCESS_CAN_FASTSEEK:
+        case STREAM_CAN_FASTSEEK:
             pb_bool = (bool*)va_arg( args, bool* );
             *pb_bool = false;
             break;
-        case ACCESS_CAN_PAUSE:
-        case ACCESS_CAN_CONTROL_PACE:
+        case STREAM_CAN_PAUSE:
+        case STREAM_CAN_CONTROL_PACE:
             pb_bool = (bool*)va_arg( args, bool* );
-
-#if 0       /* Disable for now until we have a clock synchro algo
-             * which works with something else than MPEG over UDP */
-            *pb_bool = p_sys->b_pace_control;
-#endif
             *pb_bool = true;
             break;
 
         /* */
-        case ACCESS_GET_PTS_DELAY:
+        case STREAM_GET_PTS_DELAY:
             pi_64 = (int64_t*)va_arg( args, int64_t * );
             *pi_64 = INT64_C(1000)
                 * var_InheritInteger( p_access, "network-caching" );
             break;
 
-        case ACCESS_GET_SIZE:
+        case STREAM_GET_SIZE:
             if( !p_sys->b_has_size )
                 return VLC_EGENERIC;
             pi_64 = (int64_t*)va_arg( args, int64_t * );
@@ -782,18 +707,18 @@ static int Control( access_t *p_access, int i_query, va_list args )
            break;
 
         /* */
-        case ACCESS_SET_PAUSE_STATE:
+        case STREAM_SET_PAUSE_STATE:
             break;
 
-        case ACCESS_GET_CONTENT_TYPE:
+        case STREAM_GET_CONTENT_TYPE:
         {
             char **type = va_arg( args, char ** );
 
             if( p_sys->b_icecast && p_sys->psz_mime == NULL )
                 *type = strdup( "audio/mpeg" );
-            else if( !strcasecmp( p_access->psz_access, "itpc" ) )
+            else if( !strcasecmp( p_access->psz_name, "itpc" ) )
                 *type = strdup( "application/rss+xml" );
-            else if( !strcasecmp( p_access->psz_access, "unsv" ) &&
+            else if( !strcasecmp( p_access->psz_name, "unsv" ) &&
                 p_sys->psz_mime != NULL &&
                 !strcasecmp( p_sys->psz_mime, "misc/ultravox" ) )
                 /* Grrrr! detect ultravox server and force NSV demuxer */
@@ -852,7 +777,6 @@ static int Connect( access_t *p_access, uint64_t i_tell )
 
     p_sys->psz_location = NULL;
     p_sys->psz_mime = NULL;
-    p_sys->b_mms = false;
     p_sys->b_chunked = false;
     p_sys->i_chunk = 0;
     p_sys->i_icy_meta = 0;
@@ -860,11 +784,9 @@ static int Connect( access_t *p_access, uint64_t i_tell )
     p_sys->psz_icy_name = NULL;
     p_sys->psz_icy_genre = NULL;
     p_sys->psz_icy_title = NULL;
-    p_sys->i_remaining = 0;
     p_sys->b_has_size = false;
     p_sys->offset = i_tell;
     p_sys->size = 0;
-    p_access->info.b_eof  = false;
 
     /* Open connection */
     assert( p_sys->fd == -1 ); /* No open sockets (leaking fds is BAD) */
@@ -941,17 +863,6 @@ static int Connect( access_t *p_access, uint64_t i_tell )
         }
     }
 
-    return Request( p_access, i_tell ) ? -2 : 0;
-}
-
-
-static int Request( access_t *p_access, uint64_t i_tell )
-{
-    access_sys_t   *p_sys = p_access->p_sys;
-    char           *psz ;
-
-    p_sys->i_remaining = 0;
-
     const char *psz_path = p_sys->url.psz_path;
     if( !psz_path || !*psz_path )
         psz_path = "/";
@@ -1007,10 +918,11 @@ static int Request( access_t *p_access, uint64_t i_tell )
     {
         msg_Err( p_access, "failed to send request" );
         Disconnect( p_access );
-        return VLC_EGENERIC;
+        return -2;
     }
 
     /* Read Answer */
+    char *psz;
     if( p_sys->p_tls != NULL )
         psz = vlc_tls_GetLine( p_sys->p_tls );
     else
@@ -1101,12 +1013,11 @@ static int Request( access_t *p_access, uint64_t i_tell )
 
         if( !strcasecmp( psz, "Content-Length" ) )
         {
-            uint64_t i_size = i_tell + (p_sys->i_remaining = (uint64_t)atoll( p ));
+            uint64_t i_size = i_tell + (uint64_t)atoll( p );
             if(i_size > p_sys->size) {
                 p_sys->b_has_size = true;
                 p_sys->size = i_size;
             }
-            msg_Dbg( p_access, "this frame size=%"PRIu64, p_sys->i_remaining );
         }
         else if( !strcasecmp( psz, "Content-Range" ) ) {
             uint64_t i_ntell = i_tell;
@@ -1116,14 +1027,13 @@ static int Request( access_t *p_access, uint64_t i_tell )
             if(i_nend > i_ntell ) {
                 p_sys->offset = i_ntell;
                 p_sys->i_icy_offset  = i_ntell;
-                p_sys->i_remaining = i_nend+1-i_ntell;
                 uint64_t i_size = (i_nsize > i_nend) ? i_nsize : (i_nend + 1);
                 if(i_size > p_sys->size) {
                     p_sys->b_has_size = true;
                     p_sys->size = i_size;
                 }
-                msg_Dbg( p_access, "stream size=%"PRIu64",pos=%"PRIu64",remaining=%"PRIu64,
-                         i_nsize, i_ntell, p_sys->i_remaining);
+                msg_Dbg( p_access, "stream size=%"PRIu64",pos=%"PRIu64,
+                         i_nsize, i_ntell);
             }
         }
         else if( !strcasecmp( psz, "Location" ) )
@@ -1167,12 +1077,6 @@ static int Request( access_t *p_access, uint64_t i_tell )
         {
             msg_Dbg( p_access, "Content-Encoding: %s", p );
         }
-        else if( !strcasecmp( psz, "Pragma" ) )
-        {
-            if( !strcasecmp( psz, "Pragma: features" ) )
-                p_sys->b_mms = true;
-            msg_Dbg( p_access, "Pragma: %s", p );
-        }
         else if( !strcasecmp( psz, "Server" ) )
         {
             msg_Dbg( p_access, "Server: %s", p );
@@ -1187,7 +1091,6 @@ static int Request( access_t *p_access, uint64_t i_tell )
                  * routine. They look very similar */
 
                 p_sys->b_reconnect = true;
-                p_sys->b_pace_control = false;
                 p_sys->b_icecast = true;
             }
         }
@@ -1230,7 +1133,6 @@ static int Request( access_t *p_access, uint64_t i_tell )
 
             p_sys->b_icecast = true; /* be on the safeside. set it here as well. */
             p_sys->b_reconnect = true;
-            p_sys->b_pace_control = false;
         }
         else if( !strcasecmp( psz, "Icy-Genre" ) )
         {
@@ -1304,11 +1206,11 @@ static int Request( access_t *p_access, uint64_t i_tell )
 
         free( psz );
     }
-    return VLC_SUCCESS;
+    return 0;
 
 error:
     Disconnect( p_access );
-    return VLC_EGENERIC;
+    return -2;
 }
 
 /*****************************************************************************

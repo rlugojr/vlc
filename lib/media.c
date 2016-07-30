@@ -481,6 +481,7 @@ libvlc_media_t * libvlc_media_new_as_node( libvlc_instance_t *p_instance,
     }
 
     p_md = libvlc_media_new_from_input_item( p_instance, p_input_item );
+    input_item_Release( p_input_item );
 
     p_subitems = media_get_subitems( p_md, true );
     if( p_subitems == NULL) {
@@ -794,7 +795,7 @@ static int media_parse(libvlc_media_t *media, bool b_async,
 void
 libvlc_media_parse(libvlc_media_t *media)
 {
-    media_parse( media, false, -1, libvlc_media_fetch_local );
+    media_parse( media, false, libvlc_media_fetch_local, -1 );
 }
 
 /**************************************************************************
@@ -803,7 +804,7 @@ libvlc_media_parse(libvlc_media_t *media)
 void
 libvlc_media_parse_async(libvlc_media_t *media)
 {
-    media_parse( media, true, -1, libvlc_media_fetch_local );
+    media_parse( media, true, libvlc_media_fetch_local, -1 );
 }
 
 /**************************************************************************

@@ -28,7 +28,6 @@
 
 enum ResumeResult {
     RESUME_RESTART,
-    RESUME_ALWAYS,
     RESUME_NOW
 };
 
@@ -41,13 +40,18 @@ typedef void(^CompletionBlock)(enum ResumeResult);
 
     IBOutlet id o_restart_btn;
     IBOutlet id o_resume_btn;
-    IBOutlet id o_always_resume_btn;
+    IBOutlet id o_always_resume_chk;
+
+    NSTimer *o_countdown_timer;
 }
 
 - (IBAction)buttonClicked:(id)sender;
+- (IBAction)resumeSettingChanged:(id)sender;
 
 - (void)showWindowWithItem:(input_item_t *)p_item withLastPosition:(NSInteger)pos completionBlock:(CompletionBlock)block;
 
 - (void)updateCocoaWindowLevel:(NSInteger)i_level;
+
+- (void)cancel;
 
 @end
